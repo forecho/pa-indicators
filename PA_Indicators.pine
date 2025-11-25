@@ -1,0 +1,272 @@
+//@version=6
+indicator("PA Indicators", overlay=true, max_labels_count=500, max_boxes_count=500)
+
+// ===== 参数设置 =====
+string grp_ema = "EMA 设置"
+ema20Length = input.int(20, "EMA20", minval=1, group=grp_ema)
+ema240Length = input.int(240, "EMA240", minval=1, group=grp_ema)
+
+string grp_kcounter = "K线计数器设置"
+showBarCount = input.bool(true, "K线计数", group=grp_kcounter)
+intervalCount = input.bool(true, "间隔计数", group=grp_kcounter)
+rthSession = input.session("0930-1615", "RTH(美东时间)", group=grp_kcounter)
+textSize = input.string("small", "文字大小", options=["tiny", "small", "normal", "large"], group=grp_kcounter)
+textColor = input.color(color.new(color.purple, 5), "文字颜色", group=grp_kcounter)
+
+// IBS 颜色设置
+string grp_ibs_color = "IBS 颜色设置"
+baseBullColor = input.color(#26A69A, "阳线基础颜色", group=grp_ibs_color)
+baseBearColor = input.color(#EF5350, "阴线基础颜色", group=grp_ibs_color)
+rangeColor = input.color(color.new(#2196F3, 50), "区间震荡颜色", group=grp_ibs_color)
+wickThreshold = input.float(50, "影线阈值(%)", minval=0, maxval=100, step=5, group=grp_ibs_color, tooltip="影线超过此百分比时显示为区间震荡(蓝色)")
+
+// IBS 透明度渐变：强势(0%) → 普通(30%) → 弱势(85%)
+color strongBullColor = color.new(baseBullColor, 0)    // 实色
+color strongBearColor = color.new(baseBearColor, 0)    // 实色
+color normalBullColor = color.new(baseBullColor, 30)   // 稍透明
+color normalBearColor = color.new(baseBearColor, 30)   // 稍透明
+color weakBullColor = color.new(baseBullColor, 85)     // 很淡
+color weakBearColor = color.new(baseBearColor, 85)     // 很淡
+
+// 缺口检测设置
+string grp_gap = "缺口检测设置"
+enableGapDetection = input.bool(true, "启用缺口检测", group=grp_gap)
+
+// ===== EMA =====
+ema20 = ta.ema(close, ema20Length)
+ema240 = ta.ema(close, ema240Length)
+plot(ema20, "EMA20", color=color.green, linewidth=1)
+plot(ema240, "EMA240", color=color.yellow, linewidth=1)
+
+// ================================================================= //
+// ===== IBS K线着色 + 区间震荡检测 =====
+// ================================================================= //
+
+// 1. 计算IBS值
+float rangePrice = high - low
+float ibs = rangePrice > 0 ? (close - low) / rangePrice * 100 : 50
+
+// 2. 计算影线长度占比
+float upperWick = high - math.max(open, close)  // 上影线
+float lowerWick = math.min(open, close) - low   // 下影线
+float upperWickPercent = rangePrice > 0 ? (upperWick / rangePrice * 100) : 0
+float lowerWickPercent = rangePrice > 0 ? (lowerWick / rangePrice * 100) : 0
+
+// 3. 判断是否为区间震荡K线（任一影线超过阈值）
+bool isRangeBar = upperWickPercent > wickThreshold or lowerWickPercent > wickThreshold
+
+// 4. 核心逻辑
+isBullBar = close >= open
+
+color bar_color = na
+
+// 优先判断：如果是区间震荡K线，直接用蓝色
+if isRangeBar
+    bar_color := rangeColor
+else
+    // 否则按IBS逻辑着色
+    if isBullBar
+        if ibs > 69
+            bar_color := strongBullColor
+        else if ibs < 31
+            bar_color := weakBullColor
+        else
+            bar_color := normalBullColor
+    else
+        if ibs < 31
+            bar_color := strongBearColor
+        else if ibs > 69
+            bar_color := weakBearColor
+        else
+            bar_color := normalBearColor
+
+// 5. 应用颜色
+barcolor(bar_color)
+
+// ===== K线计数 =====
+currentTfMinutes = timeframe.in_seconds() / 60
+inTimeRange = currentTfMinutes >= 5 and currentTfMinutes <= 60
+
+var int barNumber = 0
+
+if showBarCount and inTimeRange
+    
+    bool isInRth = not na(time(timeframe.period, rthSession, "America/New_York"))
+    bool isNewDay = ta.change(time("D")) != 0
+    bool isRthFirstBar = isNewDay and isInRth
+    
+    if isRthFirstBar
+        barNumber := 1
+    else if isInRth
+        barNumber := barNumber + 1
+    else
+        barNumber := 0
+    
+    if barNumber > 0
+        bool shouldDisplay = not intervalCount or (intervalCount and barNumber % 2 != 0)
+        
+        if shouldDisplay
+            lblSize = textSize == "tiny" ? size.tiny :
+              textSize == "small" ? size.small :
+              textSize == "normal" ? size.normal :
+              size.large
+
+            label.new(
+                 x=bar_index, 
+                 y=low, 
+                 text=str.tostring(barNumber), 
+                 style=label.style_none,
+                 textcolor=textColor,
+                 size=lblSize,
+                 yloc=yloc.belowbar
+                 )
+
+// ================================================================= //
+// ===== 缺口检测功能 =====
+// ================================================================= //
+
+// 固定配置
+MAX_LOOKBACK = 2
+GAP_UP_COLOR = color.new(color.green, 40)
+GAP_DOWN_COLOR = color.new(color.red, 40)
+MEASURING_UP_COLOR = color.new(color.green, 70)
+MEASURING_DOWN_COLOR = color.new(color.red, 70)
+DELETE_FILLED = true
+
+// 数据结构
+type Gap
+    box boxId
+    float top
+    float bottom
+    bool isUp
+    bool isMeasuring
+
+var array<Gap> gaps = array.new<Gap>()
+
+// 时间变量（避免重绘警告）
+newDayET = ta.change(time("D", "America/New_York"))
+isCurrentNewDay = newDayET != 0
+isPrev1NewDay = ta.change(time("D", "America/New_York"))[1] != 0
+isPrev2NewDay = ta.change(time("D", "America/New_York"))[2] != 0
+
+// 工具函数：检查缺口是否重叠
+gapsOverlap(float top1, float bottom1, float top2, float bottom2) =>
+    not (bottom1 >= top2 or bottom2 >= top1)
+
+// 主逻辑
+if enableGapDetection and barstate.isconfirmed
+    
+    // --- 1. 先检测测量型缺口（跨越2根K线的大缺口）---
+    if bar_index >= 2
+        // 只有当这3根K线都不是新交易日的第一根时，才检测测量型缺口
+        bool canDetectMeasuring = not isCurrentNewDay and not isPrev1NewDay and not isPrev2NewDay
+        
+        if canDetectMeasuring
+            bool hasMeasuring = false
+            float measuringTop = na
+            float measuringBottom = na
+            bool isUpMeasuring = false
+            
+            // 向上测量型缺口：当前K线最低点 > 前2根K线最高点
+            if low > high[2]
+                hasMeasuring := true
+                measuringTop := low
+                measuringBottom := high[2]
+                isUpMeasuring := true
+            
+            // 向下测量型缺口：当前K线最高点 < 前2根K线最低点
+            else if high < low[2]
+                hasMeasuring := true
+                measuringTop := low[2]
+                measuringBottom := high
+                isUpMeasuring := false
+            
+            if hasMeasuring
+                // 检查是否已存在相同缺口
+                bool exists = false
+                int size = array.size(gaps)
+                if size > 0
+                    for i = 0 to size - 1
+                        g = array.get(gaps, i)
+                        if math.abs(g.top - measuringTop) < 0.0001 and math.abs(g.bottom - measuringBottom) < 0.0001
+                            exists := true
+                            break
+                
+                if not exists
+                    // 根据方向选择颜色（无边框）
+                    color measuringColor = isUpMeasuring ? MEASURING_UP_COLOR : MEASURING_DOWN_COLOR
+                    
+                    newBox = box.new(bar_index - 2, measuringTop, bar_index, measuringBottom, 
+                                   bgcolor=measuringColor, border_color=na)
+                    array.push(gaps, Gap.new(newBox, measuringTop, measuringBottom, isUpMeasuring, true))
+    
+    // --- 2. 检测普通跳空缺口（相邻2根K线）---
+    for offset = 1 to MAX_LOOKBACK
+        if bar_index >= offset
+            bool hasGap = false
+            float gapTop = na
+            float gapBottom = na
+            bool isUpGap = false
+            int startBar = bar_index - offset
+            
+            // 向上缺口：当前K线最低点 > 前offset根K线最高点
+            if low > high[offset]
+                hasGap := true
+                gapTop := low
+                gapBottom := high[offset]
+                isUpGap := true
+            
+            // 向下缺口：当前K线最高点 < 前offset根K线最低点
+            else if high < low[offset]
+                hasGap := true
+                gapTop := low[offset]
+                gapBottom := high
+                isUpGap := false
+            
+            // 绘制缺口
+            if hasGap
+                // 检查是否与测量型缺口重叠（测量型缺口优先）
+                bool overlapsWithMeasuring = false
+                int size = array.size(gaps)
+                if size > 0
+                    for i = 0 to size - 1
+                        g = array.get(gaps, i)
+                        if g.isMeasuring and gapsOverlap(gapTop, gapBottom, g.top, g.bottom)
+                            overlapsWithMeasuring := true
+                            break
+                
+                // 如果不与测量型缺口重叠，检查是否已存在
+                if not overlapsWithMeasuring
+                    bool exists = false
+                    if size > 0
+                        for i = 0 to size - 1
+                            g = array.get(gaps, i)
+                            if math.abs(g.top - gapTop) < 0.0001 and math.abs(g.bottom - gapBottom) < 0.0001
+                                exists := true
+                                break
+                    
+                    if not exists
+                        color gapColor = isUpGap ? GAP_UP_COLOR : GAP_DOWN_COLOR
+                        newBox = box.new(startBar, gapTop, bar_index, gapBottom, bgcolor=gapColor, border_color=na)
+                        array.push(gaps, Gap.new(newBox, gapTop, gapBottom, isUpGap, false))
+
+// --- 3. 检查缺口回补 ---
+if enableGapDetection and DELETE_FILLED
+    int size = array.size(gaps)
+    if size > 0
+        for i = size - 1 to 0
+            g = array.get(gaps, i)
+            bool isFilled = false
+            
+            if g.isUp
+                // 向上缺口：价格回落到下边界
+                if low <= g.bottom
+                    isFilled := true
+            else
+                // 向下缺口：价格回升到上边界
+                if high >= g.top
+                    isFilled := true
+            
+            if isFilled
+                box.delete(g.boxId)
+                array.remove(gaps, i)
