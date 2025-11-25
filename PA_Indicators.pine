@@ -32,11 +32,29 @@ color weakBearColor = color.new(baseBearColor, 85)     // 很淡
 string grp_gap = "缺口检测设置"
 enableGapDetection = input.bool(true, "启用缺口检测", group=grp_gap)
 
+// L/H 标记设置
+string grp_lh = "L/H 标记设置"
+enableLH = input.bool(true, "启用 L/H 标记", group=grp_lh)
+swingLength = input.int(3, "摆动周期", minval=1, maxval=10, group=grp_lh, tooltip="检测高低点的左右K线数量")
+lhTextSize = input.string("small", "文字大小", options=["tiny", "small", "normal", "large"], group=grp_lh)
+lColor = input.color(color.green, "L 颜色", group=grp_lh)
+hColor = input.color(color.red, "H 颜色", group=grp_lh)
+trendMethod = input.string("EMA20", "趋势判断", options=["EMA20", "EMA20/240"], group=grp_lh, tooltip="EMA20: 价格在EMA20上方为上升趋势\nEMA20/240: EMA20在EMA240上方为上升趋势")
+
+// B1 提示设置
+string grp_b1 = "B1 提示设置"
+enableB1Hint = input.bool(true, "显示 B1 提示", group=grp_b1)
+gapThreshold = input.float(0.3, "跳空阈值(%)", minval=0.1, maxval=2, step=0.1, group=grp_b1, tooltip="高开/低开的判定阈值")
+
 // ===== EMA =====
 ema20 = ta.ema(close, ema20Length)
 ema240 = ta.ema(close, ema240Length)
 plot(ema20, "EMA20", color=color.green, linewidth=1)
 plot(ema240, "EMA240", color=color.yellow, linewidth=1)
+
+// ===== 趋势判断 =====
+bool isUptrend = trendMethod == "EMA20" ? close > ema20 : ema20 > ema240
+bool isDowntrend = trendMethod == "EMA20" ? close < ema20 : ema20 < ema240
 
 // ================================================================= //
 // ===== IBS K线着色 + 区间震荡检测 =====
@@ -83,6 +101,80 @@ else
 // 5. 应用颜色
 barcolor(bar_color)
 
+// ================================================================= //
+// ===== L/H 摆动高低点标记（带编号，创新高/低重置）=====
+// ================================================================= //
+
+// 检测摆动高点和低点（使用 ta.pivothigh/pivotlow，确认后标记）
+swingHigh = ta.pivothigh(high, swingLength, swingLength)
+swingLow = ta.pivotlow(low, swingLength, swingLength)
+
+// 获取文字大小
+lhSize = lhTextSize == "tiny" ? size.tiny :
+         lhTextSize == "small" ? size.small :
+         lhTextSize == "normal" ? size.normal :
+         size.large
+
+// 追踪计数和极值
+var int lCount = 0           // L 计数
+var int hCount = 0           // H 计数
+var float highestHigh = na   // 上升趋势中的最高点（用于检测新高）
+var float lowestLow = na     // 下降趋势中的最低点（用于检测新低）
+var bool wasUptrend = false  // 上一根K线的趋势状态
+
+// 趋势切换时重置
+if enableLH
+    // 检测趋势切换
+    bool trendChanged = (isUptrend and not wasUptrend) or (isDowntrend and wasUptrend)
+    
+    if trendChanged
+        lCount := 0
+        hCount := 0
+        highestHigh := high
+        lowestLow := low
+    
+    wasUptrend := isUptrend
+    
+    // 上升趋势逻辑
+    if isUptrend
+        // 检测创新高 → 重置 L 计数
+        if high > highestHigh or na(highestHigh)
+            highestHigh := high
+            lCount := 0
+        
+        // 检测到摆动低点
+        if not na(swingLow) and isUptrend[swingLength]
+            lCount := lCount + 1
+            label.new(
+                 x=bar_index - swingLength,
+                 y=low[swingLength],
+                 text="L" + str.tostring(lCount),
+                 style=label.style_label_up,
+                 color=color.new(lColor, 80),
+                 textcolor=lColor,
+                 size=lhSize
+                 )
+    
+    // 下降趋势逻辑
+    if isDowntrend
+        // 检测创新低 → 重置 H 计数
+        if low < lowestLow or na(lowestLow)
+            lowestLow := low
+            hCount := 0
+        
+        // 检测到摆动高点
+        if not na(swingHigh) and isDowntrend[swingLength]
+            hCount := hCount + 1
+            label.new(
+                 x=bar_index - swingLength,
+                 y=high[swingLength],
+                 text="H" + str.tostring(hCount),
+                 style=label.style_label_down,
+                 color=color.new(hColor, 80),
+                 textcolor=hColor,
+                 size=lhSize
+                 )
+
 // ===== K线计数 =====
 currentTfMinutes = timeframe.in_seconds() / 60
 inTimeRange = currentTfMinutes >= 5 and currentTfMinutes <= 60
@@ -120,6 +212,49 @@ if showBarCount and inTimeRange
                  size=lblSize,
                  yloc=yloc.belowbar
                  )
+
+// ================================================================= //
+// ===== 开盘提示（右上角）=====
+// ================================================================= //
+
+// 使用 request.security 获取前一天日线收盘价
+prevDayClose = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_on)
+todayOpen = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
+
+// 计算今日跳空百分比
+float todayGapPercent = not na(prevDayClose) and prevDayClose != 0 ? (todayOpen - prevDayClose) / prevDayClose * 100 : 0
+bool isGapUp = todayGapPercent > gapThreshold
+bool isGapDown = todayGapPercent < -gapThreshold
+
+// 在右上角显示提示
+var table hintTable = table.new(position.top_right, 1, 5, bgcolor=color.new(color.black, 30))
+
+// 亮色文字（深色背景下清晰可见）
+color brightGreen = #00FF7F   // 亮绿
+color brightRed = #FF6B6B     // 亮红
+color brightYellow = #FFD700  // 金黄
+color brightWhite = #FFFFFF   // 白色
+
+if enableB1Hint and barstate.islast
+    string gapPctText = str.tostring(math.abs(todayGapPercent), "#.##") + "%"
+    
+    if isGapUp
+        // 高开的 4 种情况
+        table.cell(hintTable, 0, 0, "⬆️ 高开 " + gapPctText, text_color=brightGreen, text_size=size.large)
+        table.cell(hintTable, 0, 1, "📈 双底(EMA附近) → 继续向上", text_color=brightGreen, text_size=size.normal)
+        table.cell(hintTable, 0, 2, "📈 楔形底(EMA附近) → 继续向上", text_color=brightGreen, text_size=size.normal)
+        table.cell(hintTable, 0, 3, "📉 双顶 → 向下反转", text_color=brightYellow, text_size=size.normal)
+        table.cell(hintTable, 0, 4, "📉 楔形顶 → 向下反转", text_color=brightYellow, text_size=size.normal)
+    else if isGapDown
+        // 低开的 4 种情况
+        table.cell(hintTable, 0, 0, "⬇️ 低开 " + gapPctText, text_color=brightRed, text_size=size.large)
+        table.cell(hintTable, 0, 1, "📉 双顶(EMA附近) → 继续向下", text_color=brightYellow, text_size=size.normal)
+        table.cell(hintTable, 0, 2, "📉 楔形顶(EMA附近) → 继续向下", text_color=brightYellow, text_size=size.normal)
+        table.cell(hintTable, 0, 3, "📈 双底 → 向上反转", text_color=brightGreen, text_size=size.normal)
+        table.cell(hintTable, 0, 4, "📈 楔形底 → 向上反转", text_color=brightGreen, text_size=size.normal)
+    else
+        // 平开
+        table.cell(hintTable, 0, 0, "➡️ 平开 " + gapPctText, text_color=brightWhite, text_size=size.large)
 
 // ================================================================= //
 // ===== 缺口检测功能 =====
