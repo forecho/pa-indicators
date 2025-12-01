@@ -8,7 +8,8 @@ ema240Length = input.int(240, "EMA240", minval=1, group=grp_ema)
 
 string grp_kcounter = "K线计数器设置"
 showBarCount = input.bool(true, "K线计数", group=grp_kcounter)
-intervalCount = input.bool(true, "间隔计数", group=grp_kcounter)
+// intervalCount = input.bool(true, "间隔计数", group=grp_kcounter)
+c_contador = input.int(title="间隔计数", defval=2, group=grp_kcounter)
 rthSession = input.session("0930-1615", "RTH(美东时间)", group=grp_kcounter)
 textSize = input.string("small", "文字大小", options=["tiny", "small", "normal", "large"], group=grp_kcounter)
 textColor = input.color(color.new(color.purple, 5), "文字颜色", group=grp_kcounter)
@@ -36,15 +37,38 @@ enableGapDetection = input.bool(true, "启用缺口检测", group=grp_gap)
 string grp_lh = "L/H 标记设置"
 enableLH = input.bool(true, "启用 L/H 标记", group=grp_lh)
 swingLength = input.int(3, "摆动周期", minval=1, maxval=10, group=grp_lh, tooltip="检测高低点的左右K线数量")
-lhTextSize = input.string("small", "文字大小", options=["tiny", "small", "normal", "large"], group=grp_lh)
+lhTextSize = input.string("normal", "文字大小", options=["tiny", "small", "normal", "large"], group=grp_lh)
 lColor = input.color(color.green, "L 颜色", group=grp_lh)
 hColor = input.color(color.red, "H 颜色", group=grp_lh)
 trendMethod = input.string("EMA20", "趋势判断", options=["EMA20", "EMA20/240"], group=grp_lh, tooltip="EMA20: 价格在EMA20上方为上升趋势\nEMA20/240: EMA20在EMA240上方为上升趋势")
+lLabelOffsetTicks = input.int(2, "L 标签下移(跳动)", minval=0, group=grp_lh, tooltip="向下移动 L 标签，单位为最小跳动(syminfo.mintick)")
 
 // B1 提示设置
 string grp_b1 = "B1 提示设置"
 enableB1Hint = input.bool(true, "显示 B1 提示", group=grp_b1)
 gapThreshold = input.float(0.3, "跳空阈值(%)", minval=0.1, maxval=2, step=0.1, group=grp_b1, tooltip="高开/低开的判定阈值")
+
+// 关键价位设置
+string grp_prevday = "关键价位设置"
+showPrevDayLevels = input.bool(true, "显示关键价位", group=grp_prevday)
+showTodayOpenLevel = input.bool(true, "今日开盘", group=grp_prevday)
+showPrevDayHighLevel = input.bool(true, "昨日高点", group=grp_prevday)
+showPrevDayLowLevel = input.bool(true, "昨日低点", group=grp_prevday)
+showPrevDayCloseLevel = input.bool(true, "昨日收盘", group=grp_prevday)
+todayOpenColor = input.color(color.new(color.blue, 0), "今日开盘颜色", group=grp_prevday)
+prevDayHighColor = input.color(color.new(color.red, 0), "昨日高点颜色", group=grp_prevday)
+prevDayLowColor = input.color(color.new(color.green, 0), "昨日低点颜色", group=grp_prevday)
+prevDayCloseColor = input.color(color.new(color.orange, 0), "昨日收盘颜色", group=grp_prevday)
+prevDayLineStyle = input.string("虚线", "线条样式", options=["实线", "虚线", "点线"], group=grp_prevday)
+prevDayLineWidth = input.int(1, "线条宽度", minval=1, maxval=4, group=grp_prevday)
+
+// 日内波动显示
+string grp_range = "日内波动"
+showSessionRangeInfo = input.bool(true, "显示日内波动", group=grp_range)
+avgSessionRangeLen = input.int(10, "平均样本数", minval=1, maxval=100, group=grp_range)
+// useTrueRangeForAsr = input.bool(true, "使用真实波动(含跳空)", group=grp_range)
+rangeTextColor = input.color(color.white, "文字颜色", group=grp_range)
+rangeBgColor = input.color(color.new(color.black, 70), "背景颜色", group=grp_range)
 
 // ===== EMA =====
 ema20 = ta.ema(close, ema20Length)
@@ -145,9 +169,10 @@ if enableLH
         // 检测到摆动低点
         if not na(swingLow) and isUptrend[swingLength]
             lCount := lCount + 1
+            float lLabelOffset = lLabelOffsetTicks * syminfo.mintick * 4  // 增加偏移倍数，避免太近
             label.new(
                  x=bar_index - swingLength,
-                 y=low[swingLength],
+                 y=low[swingLength] - lLabelOffset,
                  text="L" + str.tostring(lCount),
                  style=label.style_label_up,
                  color=color.new(lColor, 80),
@@ -165,9 +190,10 @@ if enableLH
         // 检测到摆动高点
         if not na(swingHigh) and isDowntrend[swingLength]
             hCount := hCount + 1
+            float hLabelOffset = lLabelOffsetTicks * syminfo.mintick * 5 // 增加偏移倍数
             label.new(
                  x=bar_index - swingLength,
-                 y=high[swingLength],
+                 y=high[swingLength] + hLabelOffset, // 加上偏移量
                  text="H" + str.tostring(hCount),
                  style=label.style_label_down,
                  color=color.new(hColor, 80),
@@ -195,7 +221,12 @@ if showBarCount and inTimeRange
         barNumber := 0
     
     if barNumber > 0
-        bool shouldDisplay = not intervalCount or (intervalCount and barNumber % 2 != 0)
+        // 逻辑参考 ex.pine: 
+        // 1. 第一根K线(barNumber=1)总是显示
+        // 2. 每隔 c_contador (默认4) 根显示一次
+        // 3. 第 12 根 (1小时) 显示红色
+        
+        bool shouldDisplay = barNumber == 1 or barNumber % c_contador == 0
         
         if shouldDisplay
             lblSize = textSize == "tiny" ? size.tiny :
@@ -203,23 +234,233 @@ if showBarCount and inTimeRange
               textSize == "normal" ? size.normal :
               size.large
 
+            // 颜色逻辑：12的倍数(1小时)显示红色，否则显示默认颜色
+            color lblColor = barNumber % 12 == 0 ? color.red : textColor
+
             label.new(
                  x=bar_index, 
-                 y=low, 
+                 y=low - syminfo.mintick * 6, // 稍微上移一点点，避免与下方L标签重叠
                  text=str.tostring(barNumber), 
                  style=label.style_none,
-                 textcolor=textColor,
+                 textcolor=lblColor,
                  size=lblSize,
-                 yloc=yloc.belowbar
+                 yloc=yloc.price // 改用 price 定位以便微调
                  )
 
 // ================================================================= //
-// ===== 开盘提示（右上角）=====
+// ===== 关键价位（基于RTH时段）=====
 // ================================================================= //
 
-// 使用 request.security 获取前一天日线收盘价
-prevDayClose = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_on)
-todayOpen = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
+// 使用 RTH session 计算真正的开盘价、最高价、最低价、收盘价
+bool isInRthSession = not na(time(timeframe.period, rthSession, "America/New_York"))
+// 日线/高周期下上一根K线可能也是RTH内，因此用换日信号辅助判定开盘
+bool isNewRthDay = ta.change(time("D", "America/New_York")) != 0
+bool rthSessionStart = isInRthSession and (isNewRthDay or not isInRthSession[1])  // RTH 第一根K线
+
+// 追踪当日 RTH 数据
+var float rthTodayOpen = na
+var float rthTodayHigh = na
+var float rthTodayLow = na
+var float rthTodayClose = na
+var int todaySessionStartIndex = na
+
+// 保存昨日 RTH 数据
+var float rthYesterdayOpen = na
+var float rthYesterdayHigh = na
+var float rthYesterdayLow = na
+var float rthYesterdayClose = na
+var int yesterdaySessionStartIndex = na
+var array<float> sessionRanges = array.new<float>()
+
+// RTH 开始时：保存昨日数据，重置今日数据
+if rthSessionStart
+    // 记录昨日开盘所在的 bar 索引，用于线条左侧定位到昨天 B1
+    if not na(todaySessionStartIndex)
+        yesterdaySessionStartIndex := todaySessionStartIndex
+    todaySessionStartIndex := bar_index
+
+    // 将今日数据保存为昨日数据
+    if not na(rthTodayOpen)
+        rthYesterdayOpen := rthTodayOpen
+        rthYesterdayHigh := rthTodayHigh
+        rthYesterdayLow := rthTodayLow
+        rthYesterdayClose := rthTodayClose
+        
+        float _range = rthTodayHigh - rthTodayLow
+        if not na(_range)
+            array.push(sessionRanges, _range)
+            if array.size(sessionRanges) > avgSessionRangeLen + 50
+                array.shift(sessionRanges)
+
+    // 重置今日数据
+    rthTodayOpen := open
+    rthTodayHigh := high
+    rthTodayLow := low
+    rthTodayClose := close
+
+// RTH 期间：更新最高价、最低价、收盘价
+if isInRthSession
+    // 如果在中途加载脚本，尚未初始化，则用当前K线初始化
+    if na(rthTodayOpen)
+        rthTodayOpen := open
+        rthTodayHigh := high
+        rthTodayLow := low
+        rthTodayClose := close
+    else
+        rthTodayHigh := na(rthTodayHigh) ? high : math.max(rthTodayHigh, high)
+        rthTodayLow := na(rthTodayLow) ? low : math.min(rthTodayLow, low)
+        rthTodayClose := close
+
+// 用于 B1 提示的数据（使用 RTH 数据）
+todayOpen = rthTodayOpen
+prevDayClose = rthYesterdayClose
+
+// 绘制关键价位线（使用 line.new 支持虚线样式）
+keyLevelStyle = prevDayLineStyle == "实线" ? line.style_solid : prevDayLineStyle == "虚线" ? line.style_dashed : line.style_dotted
+keyLevelExtend = extend.none  // 使用自定义 x1/x2 控制延伸范围
+
+var line todayOpenLine = na
+var line prevDayHighLine = na
+var line prevDayLowLine = na
+var line prevDayCloseLine = na
+var label todayOpenLabel = na
+var label prevDayHighLabel = na
+var label prevDayLowLabel = na
+var label prevDayCloseLabel = na
+var table sessionRangeTable = na
+
+// 如果关闭关键价位显示，清除已有线条和标签
+if not showPrevDayLevels
+    line.delete(todayOpenLine)
+    line.delete(prevDayHighLine)
+    line.delete(prevDayLowLine)
+    line.delete(prevDayCloseLine)
+    label.delete(todayOpenLabel)
+    label.delete(prevDayHighLabel)
+    label.delete(prevDayLowLabel)
+    label.delete(prevDayCloseLabel)
+    todayOpenLine := na
+    prevDayHighLine := na
+    prevDayLowLine := na
+    prevDayCloseLine := na
+    todayOpenLabel := na
+    prevDayHighLabel := na
+    prevDayLowLabel := na
+    prevDayCloseLabel := na
+
+if showPrevDayLevels
+    // 单独关闭时也需要移除对应线条/标签
+    if not showTodayOpenLevel
+        line.delete(todayOpenLine)
+        label.delete(todayOpenLabel)
+        todayOpenLine := na
+        todayOpenLabel := na
+    if not showPrevDayHighLevel
+        line.delete(prevDayHighLine)
+        label.delete(prevDayHighLabel)
+        prevDayHighLine := na
+        prevDayHighLabel := na
+    if not showPrevDayLowLevel
+        line.delete(prevDayLowLine)
+        label.delete(prevDayLowLabel)
+        prevDayLowLine := na
+        prevDayLowLabel := na
+    if not showPrevDayCloseLevel
+        line.delete(prevDayCloseLine)
+        label.delete(prevDayCloseLabel)
+        prevDayCloseLine := na
+        prevDayCloseLabel := na
+
+    // RTH 开始时：删除旧线条，随后根据可用数据重新创建
+    if rthSessionStart
+        line.delete(todayOpenLine)
+        line.delete(prevDayHighLine)
+        line.delete(prevDayLowLine)
+        line.delete(prevDayCloseLine)
+        label.delete(todayOpenLabel)
+        label.delete(prevDayHighLabel)
+        label.delete(prevDayLowLabel)
+        label.delete(prevDayCloseLabel)
+        todayOpenLine := na
+        prevDayHighLine := na
+        prevDayLowLine := na
+        prevDayCloseLine := na
+        todayOpenLabel := na
+        prevDayHighLabel := na
+        prevDayLowLabel := na
+        prevDayCloseLabel := na
+        
+        // 创建今日开盘线（只要拿到 RTH 开盘价就绘制）
+        if showTodayOpenLevel and not na(rthTodayOpen)
+            int leftIdxToday = nz(todaySessionStartIndex, bar_index)
+            todayOpenLine := line.new(leftIdxToday, rthTodayOpen, bar_index + 1, rthTodayOpen, color=todayOpenColor, width=prevDayLineWidth, style=keyLevelStyle, extend=keyLevelExtend)
+            todayOpenLabel := label.new(bar_index, rthTodayOpen, "开盘 " + str.tostring(rthTodayOpen, format.mintick), style=label.style_none, textcolor=todayOpenColor, size=size.normal, xloc=xloc.bar_index)
+        
+        // 创建昨日价位线（仅当上一交易日数据可用时绘制）
+        int leftIdxPrev = nz(yesterdaySessionStartIndex, bar_index)
+        if showPrevDayHighLevel and not na(rthYesterdayHigh)
+            prevDayHighLine := line.new(leftIdxPrev, rthYesterdayHigh, bar_index + 1, rthYesterdayHigh, color=prevDayHighColor, width=prevDayLineWidth, style=keyLevelStyle, extend=keyLevelExtend)
+            prevDayHighLabel := label.new(bar_index, rthYesterdayHigh, "昨高 " + str.tostring(rthYesterdayHigh, format.mintick), style=label.style_none, textcolor=prevDayHighColor, size=size.normal, xloc=xloc.bar_index)
+        if showPrevDayLowLevel and not na(rthYesterdayLow)
+            prevDayLowLine := line.new(leftIdxPrev, rthYesterdayLow, bar_index + 1, rthYesterdayLow, color=prevDayLowColor, width=prevDayLineWidth, style=keyLevelStyle, extend=keyLevelExtend)
+            prevDayLowLabel := label.new(bar_index, rthYesterdayLow, "昨低 " + str.tostring(rthYesterdayLow, format.mintick), style=label.style_none, textcolor=prevDayLowColor, size=size.normal, xloc=xloc.bar_index)
+        if showPrevDayCloseLevel and not na(rthYesterdayClose)
+            prevDayCloseLine := line.new(leftIdxPrev, rthYesterdayClose, bar_index + 1, rthYesterdayClose, color=prevDayCloseColor, width=prevDayLineWidth, style=keyLevelStyle, extend=keyLevelExtend)
+            prevDayCloseLabel := label.new(bar_index, rthYesterdayClose, "昨收 " + str.tostring(rthYesterdayClose, format.mintick), style=label.style_none, textcolor=prevDayCloseColor, size=size.normal, xloc=xloc.bar_index)
+    
+    // 更新标签位置到最右边（每根K线都更新）
+    int rightOffset = bar_index + 5
+    if not na(todayOpenLine)
+        line.set_x2(todayOpenLine, rightOffset)
+    if not na(prevDayHighLine)
+        line.set_x2(prevDayHighLine, rightOffset)
+    if not na(prevDayLowLine)
+        line.set_x2(prevDayLowLine, rightOffset)
+    if not na(prevDayCloseLine)
+        line.set_x2(prevDayCloseLine, rightOffset)
+    
+    if not na(todayOpenLabel)
+        label.set_x(todayOpenLabel, rightOffset)
+    if not na(prevDayHighLabel)
+        label.set_x(prevDayHighLabel, rightOffset)
+    if not na(prevDayLowLabel)
+        label.set_x(prevDayLowLabel, rightOffset)
+    if not na(prevDayCloseLabel)
+        label.set_x(prevDayCloseLabel, rightOffset)
+
+// ================================================================= //
+// ===== 日内波动显示（当前 & 平均）===== //
+// ================================================================= //
+
+if not showSessionRangeInfo and not na(sessionRangeTable)
+    table.delete(sessionRangeTable)
+    sessionRangeTable := na
+
+if showSessionRangeInfo
+    if na(sessionRangeTable)
+        sessionRangeTable := table.new(position.bottom_right, 2, 2, bgcolor=color.new(color.black, 50), frame_color=color.new(color.white, 90), border_width=1)
+    
+    // 当前日内波动/平均日内波动：使用RTH Session数据
+    float currentRangeDisplay = na
+    if isInRthSession or not na(rthTodayHigh)
+        currentRangeDisplay := rthTodayHigh - rthTodayLow
+    
+    float avgSessionRange = na
+    if array.size(sessionRanges) >= 1
+        int len = math.min(avgSessionRangeLen, array.size(sessionRanges))
+        array<float> slice = array.slice(sessionRanges, array.size(sessionRanges) - len)
+        avgSessionRange := array.avg(slice)
+
+    // 格式化文本
+    string strCurrentVal = na(currentRangeDisplay) ? "—" : str.tostring(currentRangeDisplay, format.mintick)
+    string strAvgVal = na(avgSessionRange) ? "—" : str.tostring(avgSessionRange, format.mintick)
+    
+    // 表格内容填充 (Title, Value)
+    table.cell(sessionRangeTable, 0, 0, "当前波动", text_color=rangeTextColor, text_size=size.normal, bgcolor=color.new(color.black, 60), text_halign=text.align_left)
+    table.cell(sessionRangeTable, 1, 0, strCurrentVal, text_color=rangeTextColor, text_size=size.normal, bgcolor=color.new(color.black, 50), text_halign=text.align_right)
+    
+    table.cell(sessionRangeTable, 0, 1, "平均波动 (" + str.tostring(avgSessionRangeLen) + ")", text_color=rangeTextColor, text_size=size.normal, bgcolor=color.new(color.black, 60), text_halign=text.align_left)
+    table.cell(sessionRangeTable, 1, 1, strAvgVal, text_color=rangeTextColor, text_size=size.normal, bgcolor=color.new(color.black, 50), text_halign=text.align_right)
 
 // 计算今日跳空百分比
 float todayGapPercent = not na(prevDayClose) and prevDayClose != 0 ? (todayOpen - prevDayClose) / prevDayClose * 100 : 0
@@ -227,34 +468,46 @@ bool isGapUp = todayGapPercent > gapThreshold
 bool isGapDown = todayGapPercent < -gapThreshold
 
 // 在右上角显示提示
-var table hintTable = table.new(position.top_right, 1, 5, bgcolor=color.new(color.black, 30))
+// 优化样式：背景稍微调高透明度，使用高亮文字以适应深色背景
+var table hintTable = table.new(position.top_right, 1, 5, bgcolor=color.new(#131722, 30), frame_color=color.new(#2A2E39, 0), border_width=1)
 
-// 亮色文字（深色背景下清晰可见）
-color brightGreen = #00FF7F   // 亮绿
-color brightRed = #FF6B6B     // 亮红
-color brightYellow = #FFD700  // 金黄
-color brightWhite = #FFFFFF   // 白色
+// 配色方案：深色背景上使用高亮色 (Bright/Pastel Colors)
+color colorUp = #4CAF50      // 亮绿色
+color colorDown = #FF5252    // 亮红色
+color colorText = #E0E0E0    // 亮灰色
+color colorTextEmph = #FFFFFF // 纯白色
 
 if enableB1Hint and barstate.islast
     string gapPctText = str.tostring(math.abs(todayGapPercent), "#.##") + "%"
     
     if isGapUp
-        // 高开的 4 种情况
-        table.cell(hintTable, 0, 0, "⬆️ 高开 " + gapPctText, text_color=brightGreen, text_size=size.large)
-        table.cell(hintTable, 0, 1, "📈 双底(EMA附近) → 继续向上", text_color=brightGreen, text_size=size.normal)
-        table.cell(hintTable, 0, 2, "📈 楔形底(EMA附近) → 继续向上", text_color=brightGreen, text_size=size.normal)
-        table.cell(hintTable, 0, 3, "📉 双顶 → 向下反转", text_color=brightYellow, text_size=size.normal)
-        table.cell(hintTable, 0, 4, "📉 楔形顶 → 向下反转", text_color=brightYellow, text_size=size.normal)
+        // 高开标题：使用涨色背景条（加深不透明度以突出标题）
+        table.cell(hintTable, 0, 0, "▲ 高开 " + gapPctText, text_color=colorTextEmph, text_size=size.normal, bgcolor=color.new(colorUp, 20), text_halign=text.align_center)
+        
+        // 策略提示：增大字号，使用高亮色
+        table.cell(hintTable, 0, 1, "📈 双底/楔形底 (EMA附近) → 做多", text_color=colorTextEmph, text_size=size.normal, text_halign=text.align_left)
+        table.cell(hintTable, 0, 2, "📈 窄通道上升 → 顺势做多", text_color=colorTextEmph, text_size=size.normal, text_halign=text.align_left)
+        table.cell(hintTable, 0, 3, "📉 双顶/楔形顶 → 反转做空", text_color=colorTextEmph, text_size=size.normal, text_halign=text.align_left)
+        table.cell(hintTable, 0, 4, "📉 跌破EMA回抽 → 做空", text_color=colorTextEmph, text_size=size.normal, text_halign=text.align_left)
+
     else if isGapDown
-        // 低开的 4 种情况
-        table.cell(hintTable, 0, 0, "⬇️ 低开 " + gapPctText, text_color=brightRed, text_size=size.large)
-        table.cell(hintTable, 0, 1, "📉 双顶(EMA附近) → 继续向下", text_color=brightYellow, text_size=size.normal)
-        table.cell(hintTable, 0, 2, "📉 楔形顶(EMA附近) → 继续向下", text_color=brightYellow, text_size=size.normal)
-        table.cell(hintTable, 0, 3, "📈 双底 → 向上反转", text_color=brightGreen, text_size=size.normal)
-        table.cell(hintTable, 0, 4, "📈 楔形底 → 向上反转", text_color=brightGreen, text_size=size.normal)
+        // 低开标题：使用跌色背景条
+        table.cell(hintTable, 0, 0, "▼ 低开 " + gapPctText, text_color=colorTextEmph, text_size=size.normal, bgcolor=color.new(colorDown, 20), text_halign=text.align_center)
+        
+        // 策略提示
+        table.cell(hintTable, 0, 1, "📉 双顶/楔形顶 (EMA附近) → 做空", text_color=colorTextEmph, text_size=size.normal, text_halign=text.align_left)
+        table.cell(hintTable, 0, 2, "📉 窄通道下跌 → 顺势做空", text_color=colorTextEmph, text_size=size.normal, text_halign=text.align_left)
+        table.cell(hintTable, 0, 3, "📈 双底/楔形底 → 反转做多", text_color=colorTextEmph, text_size=size.normal, text_halign=text.align_left)
+        table.cell(hintTable, 0, 4, "📈 突破EMA回踩 → 做多", text_color=colorTextEmph, text_size=size.normal, text_halign=text.align_left)
+
     else
         // 平开
-        table.cell(hintTable, 0, 0, "➡️ 平开 " + gapPctText, text_color=brightWhite, text_size=size.large)
+        table.cell(hintTable, 0, 0, "▶ 平开 " + gapPctText, text_color=colorTextEmph, text_size=size.normal, bgcolor=color.new(color.gray, 50), text_halign=text.align_center)
+        // 平开时清空其他行，或显示通用策略
+        table.cell(hintTable, 0, 1, "关注开盘区间突破", text_color=colorText, text_size=size.normal, text_halign=text.align_left)
+        table.cell(hintTable, 0, 2, "", bgcolor=color.new(color.white, 100)) // 清空
+        table.cell(hintTable, 0, 3, "", bgcolor=color.new(color.white, 100)) // 清空
+        table.cell(hintTable, 0, 4, "", bgcolor=color.new(color.white, 100)) // 清空
 
 // ================================================================= //
 // ===== 缺口检测功能 =====

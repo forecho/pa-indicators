@@ -1,0 +1,614 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © yohtza
+
+//@version=6
+
+indicator("bpa [yohtza]", overlay=true, max_bars_back = 300, max_labels_count = 300)
+
+// ---- functions
+test(name, x) => 
+    log.info("\n" +str.tostring(name) + "\n" + str.tostring(x))
+
+setLabel(_id, _x, _y, _text, _col, _labelSize) => 
+    label.set_xy(_id, _x, _y)
+    label.set_text(_id, _text)
+    label.set_textcolor(_id, _col)
+    label.set_size(_id, _labelSize)
+    label.set_yloc(_id, yloc.price)
+    
+drawLine(_line, _price, _lineLength, _extend) => 
+    line.set_xy1(_line, bar_index[_lineLength], _price)
+    line.set_xy2(_line, last_bar_index, _price) 
+    line.set_extend(_line, _extend)
+
+// ---- inputs
+
+
+// sessions {
+
+sessionInput = input.session("0830-1455", "Session", group = "Session")
+
+BarInSession(sess) => 
+    openHour = str.tonumber(str.substring(sess, 0, 2))
+    openMinute = str.tonumber(str.substring(sess, 2, 4))
+    closeHour = str.tonumber(str.substring(sess,5,7))
+    closeMinute = str.tonumber(str.substring(sess,7,9))    
+    openTimestamp = timestamp(year, month, dayofmonth,  int(openHour), int(openMinute), 0)
+    closeTimestamp = timestamp(year, month, dayofmonth,int(closeHour), int(closeMinute), 0)
+    currentTimestamp = timestamp(year, month, dayofmonth,hour, minute, 0)
+
+    currentTimestamp >= openTimestamp and currentTimestamp <= closeTimestamp
+barIsInSession = BarInSession(sessionInput)
+
+
+openHour = str.tonumber(str.substring(sessionInput, 0, 2))
+openMinute = str.tonumber(str.substring(sessionInput, 2, 4))
+closeHour = str.tonumber(str.substring(sessionInput,5,7))
+closeMinute = str.tonumber(str.substring(sessionInput,7,9))
+
+isFirstBarSession = (openHour == hour and openMinute == minute)
+isLastBarSession = (closeHour == hour and closeMinute == minute)
+
+
+
+var ood_new = 0.0
+var cod_new = 0.0
+var hod_new = 0.0
+var lod_new = 0.0
+var coy_new = 0.0
+var hoy_new = 0.0
+var loy_new = 0.0
+var oow = 0.0 
+
+var float gxh = na
+var float gxl = na
+
+var firstBarIndex = 0
+var lastBarIndex = 0
+var int lineLen = 10
+
+var highsArr = array.new_float(0)
+var lowsArr = array.new_float(0)
+
+if not barIsInSession
+    gxh := math.max(gxh, high)
+    gxl := math.min(gxl, low)
+
+if isLastBarSession[1] and not isLastBarSession
+    gxh := high
+    gxl := low
+
+
+if barIsInSession
+    hod_new := math.max(hod_new, high)
+    lod_new := math.min(lod_new, low)
+    cod_new := close
+    lastBarIndex := bar_index
+if isFirstBarSession
+    coy_new := cod_new[1]
+    hoy_new := hod_new[1]
+    loy_new := lod_new[1]
+    ood_new := open
+    if dayofweek == dayofweek.monday
+        oow := open
+    hod_new := high
+    lod_new := low
+    firstBarIndex := bar_index
+    lineLen := lastBarIndex[1] - firstBarIndex[1]
+    array.push(highsArr, hoy_new)
+    array.push(lowsArr, loy_new)
+
+//}
+showGlobex = input.bool(false, "Show Globex High/Low")
+showWeekly = input.bool(false, title="Show weekly levels")
+showPreviousDayClose = input.bool(true, "Show previous day close")
+showSessionOpen = input.bool(true, "Show session open")
+showMonthly = input.bool(false, title="Show monthly levels")
+extendLinesRight = input.bool(false, "Extend lines to the right")
+hideBreakoutModePatterns = input.bool(false, "Hide breakout mode patterns")
+showBarCount = input.bool(true, "Show Bar count")
+showVWAP = input.bool(false, "Enable VWAP")
+oowshow = input.bool(false, 'Show open of the week')
+showBdg = input.bool(true, "Show body gaps", "First version, there are improvements to be made", group = "Body gaps")
+extendBdg = input.bool(false, "Extend body gaps", group = "Body gaps")
+showAvgGxRange = input.bool(false, "Show average globex range",  group = "Info Table")
+hideLabels = input.bool(true, "Hide labels", group = "Labels")
+
+adrPeriod = input.int(10)
+atrPeriod = input.int(10)
+
+// ---- line style
+sessionLineStyle = input.string(line.style_solid, title="Session", options=[line.style_solid, line.style_dotted, line.style_dashed, line.style_arrow_right], group="line style")
+weeklyLineStyle = input.string(line.style_dashed, title="Weekly", options=[line.style_solid, line.style_dotted, line.style_dashed, line.style_arrow_right], group="line style")
+monthlyLineStyle = input.string(line.style_dotted, title="Monthly", options=[line.style_solid, line.style_dotted, line.style_dashed, line.style_arrow_right], group="line style")
+
+// ---- line width
+sessionLineWidth = input.int(1, title="Session", group="line width")
+weeklyLineWidth = input.int(1, title="Weekly", group="line width")
+monthlyLineWidth = input.int(1, title="Monthly", group="line width")
+
+// ---- vars
+pwHi = request.security(syminfo.tickerid, 'W', high[1])
+pwOpen = request.security(syminfo.tickerid, 'W', open[1])
+pwClose = request.security(syminfo.tickerid, 'W', close[1])
+pwLo = request.security(syminfo.tickerid, 'W', low[1])
+indexHighTF = barstate.isrealtime ? 1 : 0
+indexCurrTF = barstate.isrealtime ? 0 : 1
+atrd = request.security(syminfo.tickerid, 'D', ta.atr(atrPeriod)[indexHighTF])[indexCurrTF]
+
+pmHi = request.security(syminfo.tickerid, 'M', high[1])
+pmOpen = request.security(syminfo.tickerid, 'M', open[1])
+pmClose = request.security(syminfo.tickerid, 'M', close[1])
+pmLo = request.security(syminfo.tickerid, 'M', low[1])
+
+hideLevels = str.tonumber(timeframe.period) <= 60 
+
+var extendToRight = extend.right
+var extendNone = extend.none
+sessionX = bar_index + 3
+weeklyX = bar_index + 6
+monthlyX = bar_index + 9
+
+// ---- colors
+sOpenCol = input.color(color.aqua, title = "ood", tooltip = "Line color for session open", group = "line colors")
+pdsHiCol = input.color(color.gray, title = "pdsHiCol", tooltip = "Line color for session high of the previous day", group = "line colors")
+pdsLoCol = input.color(color.gray, title = "pdsLoCol", tooltip = "Line color for session low of the previous day", group = "line colors")
+gxhCol = input.color(color.yellow, title = "gxhCol", tooltip = "Line color for globex high ", group = "line colors")
+gxlCol = input.color(color.yellow, title = "gxlCol", tooltip = "Line color for globex low ", group = "line colors")
+pdsCloseCol = input.color(color.red, title = "pdsCloseCol", tooltip = "Line color for close high of the previous day", group = "line colors")
+pwHiCol = input.color(color.teal, title = "pwHiCol", tooltip = "Line color for previous week high", group = "line colors")
+pwOpenCol = input.color(color.teal, title = "pwOpenCol", tooltip = "Line color for previous week open ", group = "line colors")
+pwCloseCol = input.color(color.teal, title = "pwCloseCol", tooltip = "Line color for previous week close ", group = "line colors")
+pwLoCol = input.color(color.teal, title = "pwLoCol", tooltip = "Line color for previous week low ", group = "line colors")
+oowCol = input.color(color.blue, title = "oow", tooltip = "Line color for open of the previous week", group = "line colors")
+pmHiCol = input.color(color.purple, title = "pmHiCol", tooltip = "Line color for previous month high", group = "line colors")
+pmOpenCol = input.color(color.purple, title = "pmOpenCol", tooltip = "Line color for previous month open", group = "line colors")
+pmCloseCol = input.color(color.purple, title = "pmCloseCol", tooltip = "Line color for previous month close", group = "line colors")
+pmLoCol = input.color(color.purple, title = "pmLoCol", tooltip = "Line color for previous month low", group = "line colors")
+
+// ---- label size
+labelSizeOption = input.string(title="Label Size", group = "Labels",
+     options=["Auto", "Huge", "Large", "Normal", "Small", "Tiny"],
+     defval="Normal")
+labelSize = (labelSizeOption == "Huge") ? size.huge : 
+     (labelSizeOption == "Large") ? size.large : 
+     (labelSizeOption == "Small") ? size.small : 
+     (labelSizeOption == "Tiny") ? size.tiny : 
+     (labelSizeOption == "Auto") ? size.auto : 
+     size.normal  
+
+// ---- previous day session
+var pdsHiLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= pdsHiCol, style = sessionLineStyle, width = sessionLineWidth)
+var pdsCloseLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= pdsCloseCol, style = sessionLineStyle, width = sessionLineWidth)
+var pdsLoLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= pdsLoCol, style = sessionLineStyle, width = sessionLineWidth)
+var sOpenLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= sOpenCol, style = sessionLineStyle, width = sessionLineWidth)
+
+var pdsHiLabel = label.new(na, na, "", color= color(na), style = label.style_label_center) 
+var pdsCloseLabel = label.new(na, na, "", color= color(na), style = label.style_label_center) 
+var pdsLoLabel = label.new(na, na, "", color= color(na), style = label.style_label_center) 
+var sOpenLabel = label.new(na, na, "", color= color(na), style = label.style_label_center) 
+
+// ---- globex
+var gxhLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= gxhCol, style = sessionLineStyle, width = sessionLineWidth)
+var gxlLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= gxlCol, style = sessionLineStyle, width = sessionLineWidth)
+var gxhLabel = label.new(na, na, "", color= color(na), style = label.style_label_center) 
+var gxlLabel = label.new(na, na, "", color= color(na), style = label.style_label_center) 
+
+// ---- previous week
+var pwHiLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= pwHiCol, style = weeklyLineStyle, width = weeklyLineWidth)
+var pwOpenLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= pwOpenCol, style = weeklyLineStyle, width = weeklyLineWidth)
+var pwCloseLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= pwCloseCol, style = weeklyLineStyle, width = weeklyLineWidth)
+var pwLoLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= pwLoCol, style = weeklyLineStyle, width = weeklyLineWidth)
+
+var pwHiLabel = label.new(na, na, "", color= color(na), style = label.style_label_center)
+var pwLoLabel = label.new(na, na, "", color= color(na), style = label.style_label_center)
+var pwCloseLabel = label.new(na, na, "", color= color(na), style = label.style_label_center)
+var pwOpenLabel = label.new(na, na, "", color= color(na), style = label.style_label_center)
+
+// ---- previous month
+var pmHiLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= pmHiCol, style = monthlyLineStyle, width = monthlyLineWidth)
+var pmOpenLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= pmOpenCol, style = monthlyLineStyle, width = monthlyLineWidth)
+var pmCloseLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= pmCloseCol, style = monthlyLineStyle, width = monthlyLineWidth)
+var pmLoLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= pmLoCol, style = monthlyLineStyle, width = monthlyLineWidth)
+
+var pmHiLabel = label.new(na, na, "", color= color(na), style = label.style_label_center)
+var pmLoLabel = label.new(na, na, "", color= color(na), style = label.style_label_center)
+var pmCloseLabel = label.new(na, na, "", color= color(na), style = label.style_label_center)
+var pmOpenLabel = label.new(na, na, "", color= color(na), style = label.style_label_center)
+
+// ---- current week
+var oowLine = line.new(x1 = na, y1 = na, x2 = na, y2 = na, xloc = xloc.bar_index, color= oowCol, style = weeklyLineStyle, width = weeklyLineWidth)
+
+var oowLabel = label.new(na, na, '', color= color(na), style = label.style_label_center)
+
+// drawing levels {
+
+if hideLevels 
+
+    if oowshow
+        drawLine(oowLine, oow, na(lineLen) ? 5 : lineLen, extendNone)
+        if not hideLabels
+            setLabel(oowLabel, sessionX, oow, "oow", oowCol, labelSize)
+    
+    if showPreviousDayClose
+        drawLine(pdsCloseLine, coy_new, na(lineLen) ? 5 : lineLen, extendNone)
+        if not hideLabels
+            setLabel(pdsCloseLabel, sessionX, coy_new, "coy",pdsCloseCol, labelSize)
+       
+    if showSessionOpen
+        drawLine(sOpenLine, ood_new, na(lineLen) ? 5 : lineLen, extendNone)
+        if not hideLabels
+            setLabel(sOpenLabel, sessionX, ood_new, "ood", sOpenCol, labelSize)
+        
+    if array.size(highsArr) > 0 
+        pdsHi = array.get(highsArr, array.size(highsArr) -1)
+        drawLine(pdsHiLine, hoy_new, na(lineLen) ? 5 : lineLen, extendNone)
+        if not hideLabels
+            setLabel(pdsHiLabel, sessionX, hoy_new, "hoy", pdsHiCol, labelSize)
+            
+    if array.size(lowsArr) > 0 
+        pdsLo = array.get(lowsArr, array.size(lowsArr) -1)
+        drawLine(pdsLoLine, loy_new, na(lineLen) ? 5 : lineLen, extendNone)
+        if not hideLabels
+            setLabel(pdsLoLabel, sessionX, loy_new, "loy", pdsLoCol, labelSize)
+    if showGlobex
+        drawLine(gxhLine, gxh, na(lineLen) ? 5 : lineLen, extendNone)
+        drawLine(gxlLine, gxl, na(lineLen) ? 5 : lineLen, extendNone)
+        if not hideLabels
+            setLabel(gxhLabel, sessionX, gxh, "gxh", gxhCol, labelSize)
+            setLabel(gxlLabel, sessionX, gxl, "gxl", gxlCol, labelSize)
+        
+    if showWeekly
+        drawLine(pwHiLine, pwHi, na(lineLen) ? 5 : lineLen, extendNone)
+        drawLine(pwOpenLine, pwOpen, na(lineLen) ? 5 : lineLen, extendNone)
+        drawLine(pwCloseLine, pwClose, na(lineLen) ? 5 : lineLen, extendNone)
+        drawLine(pwLoLine, pwLo, na(lineLen) ? 5 : lineLen, extendNone)
+        
+        if not hideLabels
+            setLabel(pwHiLabel, weeklyX, pwHi, "hlw", pwHiCol, labelSize)
+            setLabel(pwLoLabel, weeklyX, pwLo, "llw", pwLoCol, labelSize)
+            setLabel(pwCloseLabel, weeklyX, pwClose, "clw", pwCloseCol, labelSize)
+            setLabel(pwOpenLabel, weeklyX, pwOpen, "olw", pwOpenCol, labelSize)
+    
+    if showMonthly
+        drawLine(pmHiLine, pmHi, na(lineLen) ? 5 : lineLen, extendNone)
+        drawLine(pmOpenLine, pmOpen, na(lineLen) ? 5 : lineLen, extendNone)
+        drawLine(pmCloseLine, pmClose, na(lineLen) ? 5 : lineLen, extendNone)
+        drawLine(pmLoLine, pmLo, na(lineLen) ? 5 : lineLen, extendNone)
+
+        if not hideLabels
+            setLabel(pmHiLabel, monthlyX, pmHi, "hlm", pmHiCol, labelSize)
+            setLabel(pmLoLabel, monthlyX, pmLo, "llm", pmLoCol, labelSize)
+            setLabel(pmCloseLabel, monthlyX, pmClose, "clm", pmCloseCol, labelSize)
+            setLabel(pmOpenLabel, monthlyX, pmOpen, "olm", pmOpenCol, labelSize)
+
+    if extendLinesRight
+        line.set_extend(pdsHiLine, extend.right)
+        line.set_extend(pdsLoLine, extend.right)
+        line.set_extend(pdsCloseLine, extend.right)
+        line.set_extend(sOpenLine, extend.right)
+        line.set_extend(pwHiLine, extend.right)
+        line.set_extend(pwLoLine, extend.right)
+        line.set_extend(pwOpenLine, extend.right)
+        line.set_extend(pwCloseLine, extend.right)
+        line.set_extend(pmHiLine, extend.right)
+        line.set_extend(pmLoLine, extend.right)
+        line.set_extend(pmOpenLine, extend.right)
+        line.set_extend(pmCloseLine, extend.right)
+        line.set_extend(gxhLine, extend.right)
+        line.set_extend(gxlLine, extend.right)
+//}  
+// ---- EMA 1  {
+vis1 = input.bool(true, title="Enable 1st MA", group="EMA 1")
+// res1 = input.timeframe(title="EMA 1 Timeframe", defval="Chart", group="EMA 1")
+res1 = timeframe.period
+ema1Col = input.color(color.yellow, "EMA 1 Color", group="EMA 1")
+len1 = input.int(20, minval=1, title="EMA 1 Length", group="EMA 1")
+src1 = input.source(close, title="EMA 1 Source", group="EMA 1")
+off1 = input.int(title="Offset 1st EMA", defval=0, minval=-500, maxval=500, group="EMA 1")
+smooth1 = input.bool(title="Smooth EMA 1", defval=true, group="EMA 1")
+ema1 = ta.ema(src1, len1)
+ema1_rough = request.security(syminfo.tickerid, res1, ema1, barmerge.gaps_off, barmerge.lookahead_off)
+ema1_smooth = request.security(syminfo.tickerid, res1, ema1, barmerge.gaps_on, barmerge.lookahead_off)
+//}
+// ---- EMA 2  {
+vis2 = input.bool(true, title="Enable 2nd MA", group="EMA 2")
+res2 = input.timeframe(title="EMA 2 Timeframe", defval="15", group="EMA 2")
+ema2Col = input.color(color.orange, "EMA 2 Color", group="EMA 2")
+len2 = input.int(20, minval=1, title="EMA 2 Length", group="EMA 2")
+src2 = input.source(close, title="EMA 2 Source", group="EMA 2")
+off2 = input.int(title="Offset 2nd EMA", defval=0, minval=-500, maxval=500, group="EMA 2")
+smooth2 = input.bool(title="Smooth EMA 2", defval=true, group="EMA 2")
+ema2 = ta.ema(src2, len2)
+ema2_rough = request.security(syminfo.tickerid, res2, ema2, barmerge.gaps_off, barmerge.lookahead_off)
+ema2_smooth = request.security(syminfo.tickerid, res2, ema2, barmerge.gaps_on, barmerge.lookahead_off)
+//}
+// ---- EMA 3  {
+vis3 = input.bool(true, title="Enable 3rd MA", group="EMA 3")
+res3 = input.timeframe(title="EMA 3 Timeframe", defval="60", group="EMA 3")
+ema3Col = input.color(#e65100, "EMA 3 Color", group="EMA 3")
+len3 = input.int(20, minval=1, title="EMA 3 Length", group="EMA 3")
+src3 = input.source(close, title="EMA 3 Source", group="EMA 3")
+off3 = input.int(title="Offset 3rd EMA", defval=0, minval=-500, maxval=500, group="EMA 3")
+smooth3 = input.bool(title="Smooth EMA 3", defval=true, group="EMA 3")
+ema3 = ta.ema(src3, len3)
+ema3_rough = request.security(syminfo.tickerid, res3, ema3, barmerge.gaps_off, barmerge.lookahead_off)
+ema3_smooth = request.security(syminfo.tickerid, res3, ema3, barmerge.gaps_on, barmerge.lookahead_off)
+
+condition = str.tonumber(timeframe.period) <= 60
+
+plot(vis1 ? smooth1 ? ema1_smooth: ema1_rough: na, title="EMA1", color=ema1Col, linewidth=1, offset=off1)
+plot(condition and vis2 ? smooth2 ? ema2_smooth: ema2_rough: na, title="EMA2", color=ema2Col, linewidth=1, offset=off2)
+plot(condition and vis3 ? smooth3 ? ema3_smooth: ema3_rough: na, title="EMA3", color=ema3Col, linewidth=1, offset=off3)
+//}
+// ---- candle patterns {
+oo_condition = high[1] >= high[2] and low[1] <= low[2] and high[2] >= high[3] and low[2] <= low[3]
+ii_condition = high[1] <= high[2] and low[1] >= low[2] and high[2] <= high[3] and low[2] >= low[3]
+ioi_condition = high[1] <= high[2] and low[1] >= low[2] and high[2] >= high[3] and low[2] <= low[3]
+
+if oo_condition and hideBreakoutModePatterns == false and barIsInSession
+    label.new(bar_index -1, na, yloc = yloc.abovebar, text='oo', size= size.large, textcolor = color.gray, color = color.new(color.red, 100))
+if ii_condition and hideBreakoutModePatterns == false and barIsInSession
+    label.new(bar_index -1, na, yloc = yloc.abovebar, text='ii', size= size.large, textcolor = color.gray, color = color.new(color.red, 100))
+if ioi_condition and hideBreakoutModePatterns == false and barIsInSession
+    label.new(bar_index -2, na, yloc = yloc.abovebar, text='ioi', size= size.large, textcolor = color.gray, color = color.new(color.red, 100))
+//}
+// ---- VWAP {
+vwapSource = input.source(title = "VWAP source", defval = open, group = 'VWAP')
+plot(showVWAP ? ta.vwap(vwapSource) : na)
+
+//}
+// ---- info table {
+var t = table.new(position = position.top_right, columns = 2, rows = 20)
+var txtColor = input.color(color.gray, title = "Text color", tooltip = "Text color for info table", group = "info table")
+
+
+smaHigh = ta.sma(high, adrPeriod)
+smaLow = ta.sma(low, adrPeriod)
+adr = smaHigh - smaLow
+atr = ta.atr(atrPeriod)
+hod_forex = request.security(syminfo.tickerid, 'D', high)
+lod_forex = request.security(syminfo.tickerid, "D", low)
+
+mintick = syminfo.mintick
+ticksInPoint = 1 / mintick
+
+if barstate.islast
+    sizeh = array.size(highsArr)
+    sizel = array.size(lowsArr)
+    forex = syminfo.type == 'forex'
+    if sizeh > adrPeriod and sizel > adrPeriod
+        sliceh = array.slice(highsArr, sizeh - adrPeriod, sizeh)
+        slicel = array.slice(lowsArr, sizel - adrPeriod, sizel)
+    
+        adrD = (array.avg(sliceh) - array.avg(slicel)) / mintick / ticksInPoint
+        crange = (hod_new - lod_new) / mintick / ticksInPoint
+        gap = math.abs(ood_new - coy_new) / mintick / ticksInPoint
+
+        if forex
+            adrD:= adrD /syminfo.mintick / 10
+            atr := atr /syminfo.mintick / 10
+            crange := (hod_forex-lod_forex) /syminfo.mintick / 10
+            gap := gap / syminfo.mintick / 10
+
+        gapSize = gap / adrD * 100
+        table.cell(t, 0, 1, 'average session range', text_color = txtColor)
+        table.cell(t, 1,1,str.tostring(adrD, '#.##'), text_color = txtColor)
+        // table.cell(t, 0, 7, str.tostring(syminfo.ticker), text_color = txtColor)
+        // table.cell(t, 1,7,str.tostring(syminfo.type), text_color = txtColor)
+        table.cell(t, 0, 2, 'current session range', text_color = txtColor)
+        table.cell(t, 1,2,str.tostring(crange, '#.##'), text_color = txtColor)
+        table.cell(t, 0, 3, 'gap size', text_color = txtColor)
+        table.cell(t, 1,3,str.tostring(gapSize, '#.##') + "%", text_color = txtColor)
+        table.cell(t, 0, 4, 'scalp', text_color = txtColor)
+        table.cell(t, 1,4,str.tostring(atr/2, '#.##'), text_color = txtColor)
+        table.cell(t, 0, 5, 'swing', text_color = txtColor)
+        table.cell(t, 1,5,str.tostring(adrD*0.26, '#.##')+'-'+str.tostring(adrD*0.4, '#.##'), text_color = txtColor)
+        table.cell(t, 0, 6, 'stop', text_color = txtColor)
+        table.cell(t, 1,6,str.tostring(adrD*0.1, '#.##')+'-'+str.tostring(adrD*0.2, '#.##'), text_color = txtColor)
+        
+        
+    if showAvgGxRange
+        table.cell(t, 0, 0, 'gx atr', text_color = txtColor)
+        table.cell(t, 1,0,str.tostring(atrd, '#.##'), text_color = txtColor)
+    // table.cell(t, 0, 3, syminfo.type, text_color = txtColor)
+    // table.cell(t, 1,3,str.tostring(dayofweek.friday, '#'), text_color = txtColor)
+    
+    
+//}    
+// ---- bar count {
+
+sizeOption = input.string(title="Bar Label Size", group = "Bar count",
+     options=["Auto", "Huge", "Large", "Normal", "Small", "Tiny"],
+     defval="Small")
+     
+barCountLabelSize = (sizeOption == "Huge") ? size.huge :
+     (sizeOption == "Large") ? size.large :
+     (sizeOption == "Small") ? size.small :
+     (sizeOption == "Tiny") ? size.tiny :
+     (sizeOption == "Auto") ? size.auto :
+         size.normal     
+
+color c_labelColor = input.color(color.green, "Bar Text Color", group = "Bar count")
+color hourlyCloseColor = input.color(color.red, "Hourly Close Color", group = "Bar count")
+c_contador = input.int(title="Display at every X bars", defval=4, group = "Bar count")
+
+var count = 1
+
+isLtf = timeframe.in_seconds() <= 60*60 // cont show count if tf greater than hourly
+
+if barIsInSession
+    if firstBarIndex == bar_index and showBarCount == true and isLtf
+        count := 1
+        label1 = label.new(bar_index, 0, style=label.style_none, text=str.tostring(count))
+        label.set_textcolor(label1, count % 12 == 0 ?hourlyCloseColor : c_labelColor)
+        label.set_yloc(label1, yloc.belowbar)
+        label.set_size(label1, barCountLabelSize)
+    else
+        count := count + 1
+
+    if count % c_contador == 0 and showBarCount == true and isLtf
+        label1 = label.new(bar_index, 0, style=label.style_none, text=str.tostring(count))
+        label.set_textcolor(label1, count % 12 == 0 ?hourlyCloseColor : c_labelColor)
+        label.set_yloc(label1, yloc.belowbar)
+        label.set_size(label1, barCountLabelSize)
+
+// reset bar count if early close
+if isFirstBarSession and isLtf
+    count :=1
+//}
+// ---- body gaps {
+    
+numberOfGaps = input.int(5, minval =1, maxval =20, title = "Number of recent body gaps to show", group = "Body gaps")
+blgColor = input.color(color.new(color.green, 80), title = "Bull body gap color", group = "Body gaps")
+brgColor = input.color(color.new(color.red, 80), title = "Bear body gap color", group = "Body gaps")
+
+bool blb = close[1] > open[1]
+bool brb = close[1] < open[1]
+
+var blo = array.new<float>(0,0)
+var blc = array.new<float>(0,0)
+var bloi = array.new<int>(0,0)
+var blci = array.new<int>(0,0)
+
+var bro = array.new<float>(0,0)
+var brc = array.new<float>(0,0)
+var broi = array.new<int>(0,0)
+var brci = array.new<int>(0,0)
+
+type BearGap
+    float o
+    float c
+    int x
+    int y
+
+type BullGap
+    float o
+    float c
+    int x
+    int y
+
+brg = BearGap.new(0,0,0,0)
+var bearGaps = array.new<BearGap>(0,brg)
+
+blg = BullGap.new(0,0,0,0)
+var bullGaps = array.new<BullGap>(0,blg)
+
+removeClosedBearGaps()=>
+    for [k,v] in bearGaps
+        if v.o <= close[1]
+            array.remove(bearGaps, k)
+
+removeClosedBullGaps()=>
+    for [k,v] in bullGaps
+        if v.o >= close[1]
+            array.remove(bullGaps, k)
+
+gapAdjust() =>
+    for [k, v] in bearGaps
+        if v.o > close[1] and v.c < close[1]
+            array.remove(bearGaps,k)
+            newgap = BearGap.new(v.o,close[1], v.x, bar_index -1)
+            array.push(bearGaps, newgap)
+
+    for [k, v] in bullGaps
+        if v.o < close[1] and v.c > close[1]
+            array.remove(bullGaps,k)
+            newgap = BullGap.new(v.o,close[1], v.x, bar_index -1)
+            array.push(bullGaps, newgap)
+    
+removeBoxes() => 
+    for x in box.all
+        box.delete(x)
+
+if blb 
+    if blo.size() > 2
+        fblbo = array.get(blo, array.size(blo)-2)
+        fblbi = array.get(bloi, array.size(bloi)-2)
+        sblbc = array.get(blc, array.size(blc) -1)
+        sblbi = array.get(blci, array.size(blci) -1)
+
+        size = array.size(bearGaps)
+
+        if fblbo > sblbc
+            newg = BearGap.new(fblbo,sblbc,fblbi,sblbi)
+            array.push(bearGaps, newg)
+
+    array.push(blo, open[1])
+    array.push(blc, close[1])
+    array.push(bloi, bar_index[1])
+    array.push(blci, bar_index[1])
+
+if brb 
+    if bro.size() > 2
+        fbrbo = array.get(bro, array.size(bro)-2)
+        fbrbi = array.get(broi, array.size(broi)-2)
+        sbrbc = array.get(brc, array.size(brc) -1)
+        sbrbi = array.get(brci, array.size(brci) -1)
+
+        if fbrbo < sbrbc
+            newg = BullGap.new(fbrbo,sbrbc,fbrbi,sbrbi)
+            array.push(bullGaps, newg)
+
+    array.push(bro, open[1])
+    array.push(brc, close[1])
+    array.push(broi, bar_index[1])
+    array.push(brci, bar_index[1])
+
+if barstate.isconfirmed and showBdg
+    removeClosedBullGaps()
+    removeClosedBearGaps()
+    gapAdjust()
+    removeBoxes()
+    if bullGaps.size() > numberOfGaps
+        slice = bullGaps.slice(bullGaps.size() - numberOfGaps, bullGaps.size())
+        for [k, v] in slice
+            if v.x > bar_index - 500
+                if extendBdg
+                    box.new(top = v.o, left = v.x, right = bar_index, bottom = v.c, bgcolor = blgColor, border_color = na)
+                else
+                    box.new(top = v.o, left = v.x, right = v.y, bottom = v.c, bgcolor = blgColor, border_color = na)
+
+    if bearGaps.size() > numberOfGaps
+        slice = bearGaps.slice(bearGaps.size() - numberOfGaps, bearGaps.size())
+        for [k, v] in slice
+            if v.x > bar_index - 500
+                if extendBdg
+                    box.new(top = v.o, left = v.x, right = bar_index, bottom = v.c, bgcolor = brgColor, border_color = na)
+                else
+                    box.new(top = v.o, left = v.x, right = v.y, bottom = v.c, bgcolor = brgColor, border_color = na)
+//}        
+// ---- rth ema {
+
+rthema = input.bool(false, "Show session EMA", group = "Session EMA")
+period = input.int(20, "EMA Period", group = "Session EMA")
+rthemacol = input.color(color.blue, "Session EMA Color", group="Session EMA")
+
+exp = 2 / (period + 1)
+
+var sessflag = false
+var float lastval = close
+
+opentime = hour == openHour and minute == openMinute
+closetime = hour == closeHour and minute == closeMinute
+
+if opentime
+    sessflag := true
+if closetime
+    sessflag := false
+
+if barstate.isconfirmed
+    if sessflag
+        lastval := close * exp + lastval * (1-exp)
+
+
+plot(rthema ? lastval : na, color = rthemacol)
+//}
+// htf smas {
+
+htf_condition = timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly
+plot(htf_condition ? ta.sma(close,50) : na,"sma 50", color.blue)
+plot(htf_condition ? ta.sma(close,100) : na,"sma 100", color.green)
+plot(htf_condition ? ta.sma(close,150) : na,"sma 150", color.orange)
+plot(htf_condition ? ta.sma(close,200) : na,"sma 200", color.purple)
+//}
