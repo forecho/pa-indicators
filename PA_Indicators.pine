@@ -159,15 +159,15 @@ if enableLH
     
     wasUptrend := isUptrend
     
-    // 上升趋势逻辑
+    // 上升趋势逻辑：只标记 L（低点）
     if isUptrend
         // 检测创新高 → 重置 L 计数
         if high > highestHigh or na(highestHigh)
             highestHigh := high
             lCount := 0
         
-        // 检测到摆动低点
-        if not na(swingLow) and isUptrend[swingLength]
+        // 检测到摆动低点（确认后标记）
+        if not na(swingLow)
             lCount := lCount + 1
             float lLabelOffset = lLabelOffsetTicks * syminfo.mintick * 4  // 增加偏移倍数，避免太近
             label.new(
@@ -180,15 +180,15 @@ if enableLH
                  size=lhSize
                  )
     
-    // 下降趋势逻辑
+    // 下降趋势逻辑：只标记 H（高点）
     if isDowntrend
         // 检测创新低 → 重置 H 计数
         if low < lowestLow or na(lowestLow)
             lowestLow := low
             hCount := 0
         
-        // 检测到摆动高点
-        if not na(swingHigh) and isDowntrend[swingLength]
+        // 检测到摆动高点（确认后标记）
+        if not na(swingHigh)
             hCount := hCount + 1
             float hLabelOffset = lLabelOffsetTicks * syminfo.mintick * 5 // 增加偏移倍数
             label.new(
@@ -239,7 +239,7 @@ if showBarCount and inTimeRange
 
             label.new(
                  x=bar_index, 
-                 y=low - syminfo.mintick * 6, // 稍微上移一点点，避免与下方L标签重叠
+                 y=low - syminfo.mintick * 8, // 稍微上移一点点，避免与下方L标签重叠
                  text=str.tostring(barNumber), 
                  style=label.style_none,
                  textcolor=lblColor,
@@ -438,7 +438,7 @@ if not showSessionRangeInfo and not na(sessionRangeTable)
 
 if showSessionRangeInfo
     if na(sessionRangeTable)
-        sessionRangeTable := table.new(position.bottom_right, 2, 2, bgcolor=color.new(color.black, 50), frame_color=color.new(color.white, 90), border_width=1)
+        sessionRangeTable := table.new(position.bottom_right, 2, 3, bgcolor=color.new(color.black, 50), frame_color=color.new(color.white, 90), border_width=1)
     
     // 当前日内波动/平均日内波动：使用RTH Session数据
     float currentRangeDisplay = na
@@ -451,9 +451,21 @@ if showSessionRangeInfo
         array<float> slice = array.slice(sessionRanges, array.size(sessionRanges) - len)
         avgSessionRange := array.avg(slice)
 
+    // 计算 Gap：今天开盘价与昨天最高/最低的 gap
+    float gapUp = 0.0
+    float gapDown = 0.0
+    if not na(rthTodayOpen) and not na(rthYesterdayHigh) and not na(rthYesterdayLow)
+        // 向上 gap：今天开盘 > 昨天最高
+        if rthTodayOpen > rthYesterdayHigh
+            gapUp := rthTodayOpen - rthYesterdayHigh
+        // 向下 gap：今天开盘 < 昨天最低
+        else if rthTodayOpen < rthYesterdayLow
+            gapDown := rthYesterdayLow - rthTodayOpen
+    
     // 格式化文本
     string strCurrentVal = na(currentRangeDisplay) ? "—" : str.tostring(currentRangeDisplay, format.mintick)
     string strAvgVal = na(avgSessionRange) ? "—" : str.tostring(avgSessionRange, format.mintick)
+    string strGap = gapUp > 0 ? "+" + str.tostring(gapUp, format.mintick) : gapDown > 0 ? "-" + str.tostring(gapDown, format.mintick) : "0"
     
     // 表格内容填充 (Title, Value)
     table.cell(sessionRangeTable, 0, 0, "当前波动", text_color=rangeTextColor, text_size=size.normal, bgcolor=color.new(color.black, 60), text_halign=text.align_left)
@@ -461,6 +473,9 @@ if showSessionRangeInfo
     
     table.cell(sessionRangeTable, 0, 1, "平均波动 (" + str.tostring(avgSessionRangeLen) + ")", text_color=rangeTextColor, text_size=size.normal, bgcolor=color.new(color.black, 60), text_halign=text.align_left)
     table.cell(sessionRangeTable, 1, 1, strAvgVal, text_color=rangeTextColor, text_size=size.normal, bgcolor=color.new(color.black, 50), text_halign=text.align_right)
+    
+    table.cell(sessionRangeTable, 0, 2, "Gap", text_color=rangeTextColor, text_size=size.normal, bgcolor=color.new(color.black, 60), text_halign=text.align_left)
+    table.cell(sessionRangeTable, 1, 2, strGap, text_color=rangeTextColor, text_size=size.normal, bgcolor=color.new(color.black, 50), text_halign=text.align_right)
 
 // 计算今日跳空百分比
 float todayGapPercent = not na(prevDayClose) and prevDayClose != 0 ? (todayOpen - prevDayClose) / prevDayClose * 100 : 0
