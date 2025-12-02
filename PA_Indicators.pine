@@ -48,18 +48,18 @@ string grp_b1 = "B1 提示设置"
 enableB1Hint = input.bool(true, "显示 B1 提示", group=grp_b1)
 gapThreshold = input.float(0.3, "跳空阈值(%)", minval=0.1, maxval=2, step=0.1, group=grp_b1, tooltip="高开/低开的判定阈值")
 
-// 关键价位设置
+// 关键价位设置 (颜色参考 bpa.pine)
 string grp_prevday = "关键价位设置"
 showPrevDayLevels = input.bool(true, "显示关键价位", group=grp_prevday)
 showTodayOpenLevel = input.bool(true, "今日开盘", group=grp_prevday)
 showPrevDayHighLevel = input.bool(true, "昨日高点", group=grp_prevday)
 showPrevDayLowLevel = input.bool(true, "昨日低点", group=grp_prevday)
 showPrevDayCloseLevel = input.bool(true, "昨日收盘", group=grp_prevday)
-todayOpenColor = input.color(color.new(color.blue, 0), "今日开盘颜色", group=grp_prevday)
-prevDayHighColor = input.color(color.new(color.red, 0), "昨日高点颜色", group=grp_prevday)
-prevDayLowColor = input.color(color.new(color.green, 0), "昨日低点颜色", group=grp_prevday)
-prevDayCloseColor = input.color(color.new(color.orange, 0), "昨日收盘颜色", group=grp_prevday)
-prevDayLineStyle = input.string("虚线", "线条样式", options=["实线", "虚线", "点线"], group=grp_prevday)
+todayOpenColor = input.color(color.aqua, "今日开盘颜色", group=grp_prevday)       // bpa: sOpenCol = color.aqua
+prevDayHighColor = input.color(color.gray, "昨日高点颜色", group=grp_prevday)     // bpa: pdsHiCol = color.gray
+prevDayLowColor = input.color(color.gray, "昨日低点颜色", group=grp_prevday)      // bpa: pdsLoCol = color.gray
+prevDayCloseColor = input.color(color.red, "昨日收盘颜色", group=grp_prevday)     // bpa: pdsCloseCol = color.red
+prevDayLineStyle = input.string("虚线", "线条样式", options=["实线", "虚线", "点线"], group=grp_prevday)  // bpa: line.style_solid
 prevDayLineWidth = input.int(1, "线条宽度", minval=1, maxval=4, group=grp_prevday)
 
 // 日内波动显示
