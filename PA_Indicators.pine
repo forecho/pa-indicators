@@ -19,6 +19,7 @@ string grp_ibs_color = "IBS 颜色设置"
 baseBullColor = input.color(#26A69A, "阳线基础颜色", group=grp_ibs_color)
 baseBearColor = input.color(#EF5350, "阴线基础颜色", group=grp_ibs_color)
 rangeColor = input.color(color.new(#2196F3, 50), "区间震荡颜色", group=grp_ibs_color)
+enableRangeColor = input.bool(false, "启用区间震荡着色", group=grp_ibs_color, tooltip="开启后，影线超过阈值的K线会显示为区间震荡颜色")
 wickThreshold = input.float(50, "影线阈值(%)", minval=0, maxval=100, step=5, group=grp_ibs_color, tooltip="影线超过此百分比时显示为区间震荡(蓝色)")
 
 // IBS 透明度渐变：强势(0%) → 普通(30%) → 弱势(85%)
@@ -32,6 +33,11 @@ color weakBearColor = color.new(baseBearColor, 85)     // 很淡
 // 缺口检测设置
 string grp_gap = "缺口检测设置"
 enableGapDetection = input.bool(true, "启用缺口检测", group=grp_gap)
+showOpenCloseGap = input.bool(true, "显示开盘对前收 Gap", group=grp_gap, tooltip="当前K线开盘价与上一根K线收盘价存在价差时立即标记")
+openCloseGapMinMove = input.float(0.0, "Gap 最小价差", minval=0, group=grp_gap, tooltip="价差小于此数值时不显示，0 表示自动使用最小跳动")
+openCloseGapTextSize = input.string("small", "Gap 文字大小", options=["tiny", "small", "normal"], group=grp_gap)
+openCloseGapUpColor = input.color(color.new(color.green, 70), "向上 Gap 颜色", group=grp_gap)
+openCloseGapDownColor = input.color(color.new(color.red, 70), "向下 Gap 颜色", group=grp_gap)
 
 // L/H 标记设置
 string grp_lh = "L/H 标记设置"
@@ -40,7 +46,6 @@ swingLength = input.int(3, "摆动周期", minval=1, maxval=10, group=grp_lh, to
 lhTextSize = input.string("normal", "文字大小", options=["tiny", "small", "normal", "large"], group=grp_lh)
 lColor = input.color(color.green, "L 颜色", group=grp_lh)
 hColor = input.color(color.red, "H 颜色", group=grp_lh)
-trendMethod = input.string("EMA20", "趋势判断", options=["EMA20", "EMA20/240"], group=grp_lh, tooltip="EMA20: 价格在EMA20上方为上升趋势\nEMA20/240: EMA20在EMA240上方为上升趋势")
 lLabelOffsetTicks = input.int(2, "L 标签下移(跳动)", minval=0, group=grp_lh, tooltip="向下移动 L 标签，单位为最小跳动(syminfo.mintick)")
 
 // B1 提示设置
@@ -76,10 +81,6 @@ ema240 = ta.ema(close, ema240Length)
 plot(ema20, "EMA20", color=color.green, linewidth=1)
 plot(ema240, "EMA240", color=color.yellow, linewidth=1)
 
-// ===== 趋势判断 =====
-bool isUptrend = trendMethod == "EMA20" ? close > ema20 : ema20 > ema240
-bool isDowntrend = trendMethod == "EMA20" ? close < ema20 : ema20 < ema240
-
 // ================================================================= //
 // ===== IBS K线着色 + 区间震荡检测 =====
 // ================================================================= //
@@ -96,14 +97,15 @@ float lowerWickPercent = rangePrice > 0 ? (lowerWick / rangePrice * 100) : 0
 
 // 3. 判断是否为区间震荡K线（任一影线超过阈值）
 bool isRangeBar = upperWickPercent > wickThreshold or lowerWickPercent > wickThreshold
+bool shouldColorRange = enableRangeColor and isRangeBar
 
 // 4. 核心逻辑
 isBullBar = close >= open
 
 color bar_color = na
 
-// 优先判断：如果是区间震荡K线，直接用蓝色
-if isRangeBar
+// 优先判断：如果启用了区间震荡着色且满足条件，直接用蓝色
+if shouldColorRange
     bar_color := rangeColor
 else
     // 否则按IBS逻辑着色
@@ -129,6 +131,11 @@ barcolor(bar_color)
 // ===== L/H 摆动高低点标记（带编号，创新高/低重置）=====
 // ================================================================= //
 
+// RTH 开盘（B1）用于日内重置 L/H 计数
+bool isInRthSessionLH = not na(time(timeframe.period, rthSession, "America/New_York"))
+bool isNewRthDayLH = ta.change(time("D", "America/New_York")) != 0
+bool rthSessionStartLH = isInRthSessionLH and (isNewRthDayLH or not isInRthSessionLH[1])
+
 // 检测摆动高点和低点（使用 ta.pivothigh/pivotlow，确认后标记）
 swingHigh = ta.pivothigh(high, swingLength, swingLength)
 swingLow = ta.pivotlow(low, swingLength, swingLength)
@@ -142,64 +149,140 @@ lhSize = lhTextSize == "tiny" ? size.tiny :
 // 追踪计数和极值
 var int lCount = 0           // L 计数
 var int hCount = 0           // H 计数
-var float highestHigh = na   // 上升趋势中的最高点（用于检测新高）
-var float lowestLow = na     // 下降趋势中的最低点（用于检测新低）
-var bool wasUptrend = false  // 上一根K线的趋势状态
+var float highestHigh = na   // 最高点（用于检测新高）
+var float lowestLow = na     // 最低点（用于检测新低）
+var array<int> pendingHighIdx = array.new_int()    // 待触发的 H 信号（pivot 低点）
+var array<float> pendingHighBreak = array.new_float()
+var array<int> pendingLowIdx = array.new_int()     // 待触发的 L 信号（pivot 高点）
+var array<float> pendingLowBreak = array.new_float()
 
-// 趋势切换时重置
-if enableLH
-    // 检测趋势切换
-    bool trendChanged = (isUptrend and not wasUptrend) or (isDowntrend and wasUptrend)
-    
-    if trendChanged
+// 只标记入场K：信号K是摆动高低点，入场K是突破信号K的那根K线（仅在 RTH 内计数）
+if enableLH and isInRthSessionLH
+    // RTH 日内开盘（B1）重置计数并初始化极值与待触发信号
+    if rthSessionStartLH
         lCount := 0
         hCount := 0
         highestHigh := high
         lowestLow := low
+        array.clear(pendingHighIdx)
+        array.clear(pendingHighBreak)
+        array.clear(pendingLowIdx)
+        array.clear(pendingLowBreak)
+
+    // 首次加载或缺失时初始化极值
+    if na(highestHigh)
+        highestHigh := high
+    if na(lowestLow)
+        lowestLow := low
+
+    // 新高/新低后重置对应计数并清理待触发信号
+    if high > highestHigh
+        highestHigh := high
+        lCount := 0
+        array.clear(pendingLowIdx)
+        array.clear(pendingLowBreak)
+    if low < lowestLow
+        lowestLow := low
+        hCount := 0
+        array.clear(pendingHighIdx)
+        array.clear(pendingHighBreak)
     
-    wasUptrend := isUptrend
-    
-    // 上升趋势逻辑：只标记 L（低点）
-    if isUptrend
-        // 检测创新高 → 重置 L 计数
-        if high > highestHigh or na(highestHigh)
-            highestHigh := high
-            lCount := 0
-        
-        // 检测到摆动低点（确认后标记）
-        if not na(swingLow)
-            lCount := lCount + 1
-            float lLabelOffset = lLabelOffsetTicks * syminfo.mintick * 4  // 增加偏移倍数，避免太近
+    // 检测到摆动低点（作为 H 信号K）
+    if not na(swingLow)
+        int sigIdx = bar_index - swingLength
+        float sigHigh = high[swingLength]
+        // 如果在确认前就已突破，回溯寻找最早的入场K
+        int entryIdxH = na
+        for idx = sigIdx + 1 to bar_index
+            int offset = bar_index - idx
+            if high[offset] > sigHigh
+                entryIdxH := idx
+                break
+        if not na(entryIdxH)
+            hCount += 1
+            float hLabelOffset = lLabelOffsetTicks * syminfo.mintick * 5
+            int off = bar_index - entryIdxH
             label.new(
-                 x=bar_index - swingLength,
-                 y=low[swingLength] - lLabelOffset,
-                 text="L" + str.tostring(lCount),
-                 style=label.style_label_up,
-                 color=color.new(lColor, 80),
-                 textcolor=lColor,
-                 size=lhSize
-                 )
-    
-    // 下降趋势逻辑：只标记 H（高点）
-    if isDowntrend
-        // 检测创新低 → 重置 H 计数
-        if low < lowestLow or na(lowestLow)
-            lowestLow := low
-            hCount := 0
-        
-        // 检测到摆动高点（确认后标记）
-        if not na(swingHigh)
-            hCount := hCount + 1
-            float hLabelOffset = lLabelOffsetTicks * syminfo.mintick * 5 // 增加偏移倍数
-            label.new(
-                 x=bar_index - swingLength,
-                 y=high[swingLength] + hLabelOffset, // 加上偏移量
+                 x=entryIdxH,
+                 y=high[off] + hLabelOffset,
                  text="H" + str.tostring(hCount),
                  style=label.style_label_down,
                  color=color.new(hColor, 80),
                  textcolor=hColor,
                  size=lhSize
                  )
+        else
+            array.push(pendingHighIdx, sigIdx)
+            array.push(pendingHighBreak, sigHigh)
+    
+    // 检测到摆动高点（作为 L 信号K）
+    if not na(swingHigh)
+        int sigIdx = bar_index - swingLength
+        float sigLow = low[swingLength]
+        int entryIdxL = na
+        for idx = sigIdx + 1 to bar_index
+            int offset = bar_index - idx
+            if low[offset] < sigLow
+                entryIdxL := idx
+                break
+        if not na(entryIdxL)
+            lCount += 1
+            float lLabelOffset = lLabelOffsetTicks * syminfo.mintick * 4
+            int off = bar_index - entryIdxL
+            label.new(
+                 x=entryIdxL,
+                 y=low[off] - lLabelOffset,
+                 text="L" + str.tostring(lCount),
+                 style=label.style_label_up,
+                 color=color.new(lColor, 80),
+                 textcolor=lColor,
+                 size=lhSize
+                 )
+        else
+            array.push(pendingLowIdx, sigIdx)
+            array.push(pendingLowBreak, sigLow)
+
+    // 处理待触发的 H 信号：当前K线突破信号K高点则标记入场
+    int i = 0
+    while i < array.size(pendingHighIdx)
+        float triggerHigh = array.get(pendingHighBreak, i)
+        if high > triggerHigh
+            hCount += 1
+            float hLabelOffset = lLabelOffsetTicks * syminfo.mintick * 5
+            label.new(
+                 x=bar_index,
+                 y=high + hLabelOffset,
+                 text="H" + str.tostring(hCount),
+                 style=label.style_label_down,
+                 color=color.new(hColor, 80),
+                 textcolor=hColor,
+                 size=lhSize
+                 )
+            array.remove(pendingHighIdx, i)
+            array.remove(pendingHighBreak, i)
+        else
+            i += 1
+
+    // 处理待触发的 L 信号：当前K线跌破信号K低点则标记入场
+    i := 0
+    while i < array.size(pendingLowIdx)
+        float triggerLow = array.get(pendingLowBreak, i)
+        if low < triggerLow
+            lCount += 1
+            float lLabelOffset = lLabelOffsetTicks * syminfo.mintick * 4
+            label.new(
+                 x=bar_index,
+                 y=low - lLabelOffset,
+                 text="L" + str.tostring(lCount),
+                 style=label.style_label_up,
+                 color=color.new(lColor, 80),
+                 textcolor=lColor,
+                 size=lhSize
+                 )
+            array.remove(pendingLowIdx, i)
+            array.remove(pendingLowBreak, i)
+        else
+            i += 1
 
 // ===== K线计数 =====
 currentTfMinutes = timeframe.in_seconds() / 60
@@ -523,6 +606,29 @@ if enableB1Hint and barstate.islast
         table.cell(hintTable, 0, 2, "", bgcolor=color.new(color.white, 100)) // 清空
         table.cell(hintTable, 0, 3, "", bgcolor=color.new(color.white, 100)) // 清空
         table.cell(hintTable, 0, 4, "", bgcolor=color.new(color.white, 100)) // 清空
+
+// ================================================================= //
+// ===== 开盘 vs 前收 Gap 标记（开盘即显示）===== //
+// ================================================================= //
+
+gapLabelSize = openCloseGapTextSize == "tiny" ? size.tiny :
+         openCloseGapTextSize == "small" ? size.small :
+         size.normal
+
+float openCloseGapDiff = na
+if bar_index > 0
+    openCloseGapDiff := open - close[1]
+
+float gapMinMove = openCloseGapMinMove > 0 ? openCloseGapMinMove : syminfo.mintick
+
+bool hasOpenCloseGap = showOpenCloseGap and not na(openCloseGapDiff) and math.abs(openCloseGapDiff) >= gapMinMove
+float openCloseGapMid = hasOpenCloseGap ? (open + close[1]) / 2 : na
+
+if barstate.isnew and hasOpenCloseGap
+    bool isOpenGapUp = openCloseGapDiff > 0
+    string ocText = isOpenGapUp ? "Gap↑ " + str.tostring(math.abs(openCloseGapDiff), format.mintick) : "Gap↓ " + str.tostring(math.abs(openCloseGapDiff), format.mintick)
+    color gapBg = isOpenGapUp ? openCloseGapUpColor : openCloseGapDownColor
+    label.new(bar_index, openCloseGapMid, ocText, style=isOpenGapUp ? label.style_label_up : label.style_label_down, color=gapBg, textcolor=color.white, size=gapLabelSize, yloc=yloc.price)
 
 // ================================================================= //
 // ===== 缺口检测功能 =====
