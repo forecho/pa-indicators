@@ -42,7 +42,6 @@ openCloseGapDownColor = input.color(color.new(color.red, 70), "向下 Gap 颜色
 // L/H 标记设置
 string grp_lh = "L/H 标记设置"
 enableLH = input.bool(true, "启用 L/H 标记", group=grp_lh)
-swingLength = input.int(3, "摆动周期", minval=1, maxval=10, group=grp_lh, tooltip="检测高低点的左右K线数量")
 lhTextSize = input.string("normal", "文字大小", options=["tiny", "small", "normal", "large"], group=grp_lh)
 lColor = input.color(color.green, "L 颜色", group=grp_lh)
 hColor = input.color(color.red, "H 颜色", group=grp_lh)
@@ -136,9 +135,11 @@ bool isInRthSessionLH = not na(time(timeframe.period, rthSession, "America/New_Y
 bool isNewRthDayLH = ta.change(time("D", "America/New_York")) != 0
 bool rthSessionStartLH = isInRthSessionLH and (isNewRthDayLH or not isInRthSessionLH[1])
 
-// 检测摆动高点和低点（使用 ta.pivothigh/pivotlow，确认后标记）
-swingHigh = ta.pivothigh(high, swingLength, swingLength)
-swingLow = ta.pivotlow(low, swingLength, swingLength)
+// 摆动计数只用左侧确认，且只标入场K（RTH 内）
+int swingLen = 3
+float lowestLeft = ta.lowest(low, swingLen + 1)[1]
+float highestLeft = ta.highest(high, swingLen + 1)[1]
+bool hasHistory = bar_index > swingLen
 
 // 获取文字大小
 lhSize = lhTextSize == "tiny" ? size.tiny :
@@ -146,108 +147,44 @@ lhSize = lhTextSize == "tiny" ? size.tiny :
          lhTextSize == "normal" ? size.normal :
          size.large
 
-// 追踪计数和极值
-var int lCount = 0           // L 计数
-var int hCount = 0           // H 计数
-var float highestHigh = na   // 最高点（用于检测新高）
-var float lowestLow = na     // 最低点（用于检测新低）
-var array<int> pendingHighIdx = array.new_int()    // 待触发的 H 信号（pivot 低点）
-var array<float> pendingHighBreak = array.new_float()
-var array<int> pendingLowIdx = array.new_int()     // 待触发的 L 信号（pivot 高点）
-var array<float> pendingLowBreak = array.new_float()
+// 追踪计数与回调状态
+var int lCount = 0
+var int hCount = 0
+var float hLastLow = na
+var float lLastHigh = na
+var bool bullPB = false
+var bool bearPB = false
+var float bullPBL = na
+var float bearPBH = na
 
-// 只标记入场K：信号K是摆动高低点，入场K是突破信号K的那根K线（仅在 RTH 内计数）
 if enableLH and isInRthSessionLH
-    // RTH 日内开盘（B1）重置计数并初始化极值与待触发信号
+    // RTH 日内重置
     if rthSessionStartLH
         lCount := 0
         hCount := 0
-        highestHigh := high
-        lowestLow := low
-        array.clear(pendingHighIdx)
-        array.clear(pendingHighBreak)
-        array.clear(pendingLowIdx)
-        array.clear(pendingLowBreak)
+        hLastLow := na
+        lLastHigh := na
+        bullPB := false
+        bearPB := false
+        bullPBL := na
+        bearPBH := na
 
-    // 首次加载或缺失时初始化极值
-    if na(highestHigh)
-        highestHigh := high
-    if na(lowestLow)
-        lowestLow := low
+    // 只在有足够历史时判断
+    if hasHistory
+        // 记录多头回调
+        if low < low[1]
+            bullPB := true
+            bullPBL := na(bullPBL) ? low : math.min(bullPBL, low)
 
-    // 新高/新低后重置对应计数并清理待触发信号
-    if high > highestHigh
-        highestHigh := high
-        lCount := 0
-        array.clear(pendingLowIdx)
-        array.clear(pendingLowBreak)
-    if low < lowestLow
-        lowestLow := low
-        hCount := 0
-        array.clear(pendingHighIdx)
-        array.clear(pendingHighBreak)
-    
-    // 检测到摆动低点（作为 H 信号K）
-    if not na(swingLow)
-        int sigIdx = bar_index - swingLength
-        float sigHigh = high[swingLength]
-        // 如果在确认前就已突破，回溯寻找最早的入场K
-        int entryIdxH = na
-        for idx = sigIdx + 1 to bar_index
-            int offset = bar_index - idx
-            if high[offset] > sigHigh
-                entryIdxH := idx
-                break
-        if not na(entryIdxH)
+        // 多头恢复：高点突破前高（严格 >），标 H 入场
+        if high > high[1] and bullPB
             hCount += 1
-            float hLabelOffset = lLabelOffsetTicks * syminfo.mintick * 5
-            int off = bar_index - entryIdxH
-            label.new(
-                 x=entryIdxH,
-                 y=high[off] + hLabelOffset,
-                 text="H" + str.tostring(hCount),
-                 style=label.style_label_down,
-                 color=color.new(hColor, 80),
-                 textcolor=hColor,
-                 size=lhSize
-                 )
-        else
-            array.push(pendingHighIdx, sigIdx)
-            array.push(pendingHighBreak, sigHigh)
-    
-    // 检测到摆动高点（作为 L 信号K）
-    if not na(swingHigh)
-        int sigIdx = bar_index - swingLength
-        float sigLow = low[swingLength]
-        int entryIdxL = na
-        for idx = sigIdx + 1 to bar_index
-            int offset = bar_index - idx
-            if low[offset] < sigLow
-                entryIdxL := idx
-                break
-        if not na(entryIdxL)
-            lCount += 1
-            float lLabelOffset = lLabelOffsetTicks * syminfo.mintick * 4
-            int off = bar_index - entryIdxL
-            label.new(
-                 x=entryIdxL,
-                 y=low[off] - lLabelOffset,
-                 text="L" + str.tostring(lCount),
-                 style=label.style_label_up,
-                 color=color.new(lColor, 80),
-                 textcolor=lColor,
-                 size=lhSize
-                 )
-        else
-            array.push(pendingLowIdx, sigIdx)
-            array.push(pendingLowBreak, sigLow)
+            if bullPBL > hLastLow or na(hLastLow)
+                hCount := 1
+            hLastLow := bullPBL
+            bullPBL := na
+            bullPB := false
 
-    // 处理待触发的 H 信号：当前K线突破信号K高点则标记入场
-    int i = 0
-    while i < array.size(pendingHighIdx)
-        float triggerHigh = array.get(pendingHighBreak, i)
-        if high > triggerHigh
-            hCount += 1
             float hLabelOffset = lLabelOffsetTicks * syminfo.mintick * 5
             label.new(
                  x=bar_index,
@@ -258,17 +195,21 @@ if enableLH and isInRthSessionLH
                  textcolor=hColor,
                  size=lhSize
                  )
-            array.remove(pendingHighIdx, i)
-            array.remove(pendingHighBreak, i)
-        else
-            i += 1
 
-    // 处理待触发的 L 信号：当前K线跌破信号K低点则标记入场
-    i := 0
-    while i < array.size(pendingLowIdx)
-        float triggerLow = array.get(pendingLowBreak, i)
-        if low < triggerLow
+        // 记录空头反弹
+        if high > high[1]
+            bearPB := true
+            bearPBH := na(bearPBH) ? high : math.max(bearPBH, high)
+
+        // 空头恢复：低点跌破前低（严格 <），标 L 入场
+        if low < low[1] and bearPB
             lCount += 1
+            if bearPBH < lLastHigh or na(lLastHigh)
+                lCount := 1
+            lLastHigh := bearPBH
+            bearPBH := na
+            bearPB := false
+
             float lLabelOffset = lLabelOffsetTicks * syminfo.mintick * 4
             label.new(
                  x=bar_index,
@@ -279,10 +220,6 @@ if enableLH and isInRthSessionLH
                  textcolor=lColor,
                  size=lhSize
                  )
-            array.remove(pendingLowIdx, i)
-            array.remove(pendingLowBreak, i)
-        else
-            i += 1
 
 // ===== K线计数 =====
 currentTfMinutes = timeframe.in_seconds() / 60
