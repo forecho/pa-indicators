@@ -33,7 +33,7 @@ color weakBearColor = color.new(baseBearColor, 85)     // 很淡
 // 缺口检测设置
 string grp_gap = "缺口检测设置"
 enableGapDetection = input.bool(true, "启用缺口检测", group=grp_gap)
-showOpenCloseGap = input.bool(true, "显示开盘对前收 Gap", group=grp_gap, tooltip="当前K线开盘价与上一根K线收盘价存在价差时立即标记")
+showOpenCloseGap = input.bool(false, "显示开盘对前收 Gap", group=grp_gap, tooltip="当前K线开盘价与上一根K线收盘价存在价差时立即标记")
 openCloseGapMinMove = input.float(0.0, "Gap 最小价差", minval=0, group=grp_gap, tooltip="价差小于此数值时不显示，0 表示自动使用最小跳动")
 openCloseGapTextSize = input.string("small", "Gap 文字大小", options=["tiny", "small", "normal"], group=grp_gap)
 openCloseGapUpColor = input.color(color.new(color.green, 70), "向上 Gap 颜色", group=grp_gap)
