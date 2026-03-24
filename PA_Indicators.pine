@@ -52,6 +52,15 @@ string grp_b1 = "B1 提示设置"
 enableB1Hint = input.bool(true, "显示 B1 提示", group=grp_b1)
 gapThreshold = input.float(0.3, "跳空阈值(%)", minval=0.1, maxval=2, step=0.1, group=grp_b1, tooltip="高开/低开的判定阈值")
 
+// PA 形态设置
+string grp_pa = "PA 形态设置"
+showPA_II = input.bool(true, "显示 ii", group=grp_pa)
+showPA_IOI = input.bool(true, "显示 ioi", group=grp_pa)
+showPA_III = input.bool(true, "显示 iii", group=grp_pa)
+showPA_OO = input.bool(true, "显示 oo", group=grp_pa)
+paTextSize = input.string("small", "文字大小", options=["tiny", "small", "normal", "large"], group=grp_pa)
+paTextColor = input.color(color.yellow, "文字颜色", group=grp_pa)
+
 // 关键价位设置 (颜色参考 bpa.pine)
 string grp_prevday = "关键价位设置"
 showPrevDayLevels = input.bool(true, "显示关键价位", group=grp_prevday)
@@ -59,10 +68,12 @@ showTodayOpenLevel = input.bool(true, "今日开盘", group=grp_prevday)
 showPrevDayHighLevel = input.bool(true, "昨日高点", group=grp_prevday)
 showPrevDayLowLevel = input.bool(true, "昨日低点", group=grp_prevday)
 showPrevDayCloseLevel = input.bool(true, "昨日收盘", group=grp_prevday)
+showTodayMidLevel = input.bool(true, "今日50%", group=grp_prevday)
 todayOpenColor = input.color(color.aqua, "今日开盘颜色", group=grp_prevday)       // bpa: sOpenCol = color.aqua
 prevDayHighColor = input.color(color.gray, "昨日高点颜色", group=grp_prevday)     // bpa: pdsHiCol = color.gray
 prevDayLowColor = input.color(color.gray, "昨日低点颜色", group=grp_prevday)      // bpa: pdsLoCol = color.gray
 prevDayCloseColor = input.color(color.red, "昨日收盘颜色", group=grp_prevday)     // bpa: pdsCloseCol = color.red
+todayMidColor = input.color(color.orange, "今日50%颜色", group=grp_prevday)
 prevDayLineStyle = input.string("虚线", "线条样式", options=["实线", "虚线", "点线"], group=grp_prevday)  // bpa: line.style_solid
 prevDayLineWidth = input.int(1, "线条宽度", minval=1, maxval=4, group=grp_prevday)
 
@@ -281,7 +292,10 @@ bool rthSessionStart = isInRthSession and (isNewRthDay or not isInRthSession[1])
 var float rthTodayOpen = na
 var float rthTodayHigh = na
 var float rthTodayLow = na
-var float rthTodayClose = na
+var float rthTodayClose = na       // PA 收盘：排除最后3根K线
+var float _closeBuf1 = na          // 1根前的 close
+var float _closeBuf2 = na          // 2根前的 close
+var float _closeBuf3 = na          // 3根前的 close
 var int todaySessionStartIndex = na
 
 // 保存昨日 RTH 数据
@@ -305,7 +319,7 @@ if rthSessionStart
         rthYesterdayHigh := rthTodayHigh
         rthYesterdayLow := rthTodayLow
         rthYesterdayClose := rthTodayClose
-        
+
         float _range = rthTodayHigh - rthTodayLow
         if not na(_range)
             array.push(sessionRanges, _range)
@@ -316,7 +330,10 @@ if rthSessionStart
     rthTodayOpen := open
     rthTodayHigh := high
     rthTodayLow := low
-    rthTodayClose := close
+    rthTodayClose := na
+    _closeBuf1 := na
+    _closeBuf2 := na
+    _closeBuf3 := na
 
 // RTH 期间：更新最高价、最低价、收盘价
 if isInRthSession
@@ -325,11 +342,19 @@ if isInRthSession
         rthTodayOpen := open
         rthTodayHigh := high
         rthTodayLow := low
-        rthTodayClose := close
+        rthTodayClose := na
+        _closeBuf1 := na
+        _closeBuf2 := na
+        _closeBuf3 := na
     else
         rthTodayHigh := na(rthTodayHigh) ? high : math.max(rthTodayHigh, high)
         rthTodayLow := na(rthTodayLow) ? low : math.min(rthTodayLow, low)
-        rthTodayClose := close
+    // 滚动缓冲：收盘价延迟3根K线
+    _closeBuf3 := _closeBuf2
+    _closeBuf2 := _closeBuf1
+    _closeBuf1 := close
+    if not na(_closeBuf3)
+        rthTodayClose := _closeBuf3
 
 // 用于 B1 提示的数据（使用 RTH 数据）
 todayOpen = rthTodayOpen
@@ -343,10 +368,12 @@ var line todayOpenLine = na
 var line prevDayHighLine = na
 var line prevDayLowLine = na
 var line prevDayCloseLine = na
+var line todayMidLine = na
 var label todayOpenLabel = na
 var label prevDayHighLabel = na
 var label prevDayLowLabel = na
 var label prevDayCloseLabel = na
+var label todayMidLabel = na
 var table sessionRangeTable = na
 
 // 如果关闭关键价位显示，清除已有线条和标签
@@ -355,18 +382,22 @@ if not showPrevDayLevels
     line.delete(prevDayHighLine)
     line.delete(prevDayLowLine)
     line.delete(prevDayCloseLine)
+    line.delete(todayMidLine)
     label.delete(todayOpenLabel)
     label.delete(prevDayHighLabel)
     label.delete(prevDayLowLabel)
     label.delete(prevDayCloseLabel)
+    label.delete(todayMidLabel)
     todayOpenLine := na
     prevDayHighLine := na
     prevDayLowLine := na
     prevDayCloseLine := na
+    todayMidLine := na
     todayOpenLabel := na
     prevDayHighLabel := na
     prevDayLowLabel := na
     prevDayCloseLabel := na
+    todayMidLabel := na
 
 if showPrevDayLevels
     // 单独关闭时也需要移除对应线条/标签
@@ -390,6 +421,11 @@ if showPrevDayLevels
         label.delete(prevDayCloseLabel)
         prevDayCloseLine := na
         prevDayCloseLabel := na
+    if not showTodayMidLevel
+        line.delete(todayMidLine)
+        label.delete(todayMidLabel)
+        todayMidLine := na
+        todayMidLabel := na
 
     // RTH 开始时：删除旧线条，随后根据可用数据重新创建
     if rthSessionStart
@@ -397,18 +433,22 @@ if showPrevDayLevels
         line.delete(prevDayHighLine)
         line.delete(prevDayLowLine)
         line.delete(prevDayCloseLine)
+        line.delete(todayMidLine)
         label.delete(todayOpenLabel)
         label.delete(prevDayHighLabel)
         label.delete(prevDayLowLabel)
         label.delete(prevDayCloseLabel)
+        label.delete(todayMidLabel)
         todayOpenLine := na
         prevDayHighLine := na
         prevDayLowLine := na
         prevDayCloseLine := na
+        todayMidLine := na
         todayOpenLabel := na
         prevDayHighLabel := na
         prevDayLowLabel := na
         prevDayCloseLabel := na
+        todayMidLabel := na
         
         // 创建今日开盘线（只要拿到 RTH 开盘价就绘制）
         if showTodayOpenLevel and not na(rthTodayOpen)
@@ -428,6 +468,15 @@ if showPrevDayLevels
             prevDayCloseLine := line.new(leftIdxPrev, rthYesterdayClose, bar_index + 1, rthYesterdayClose, color=prevDayCloseColor, width=prevDayLineWidth, style=keyLevelStyle, extend=keyLevelExtend)
             prevDayCloseLabel := label.new(bar_index, rthYesterdayClose, "昨收 " + str.tostring(rthYesterdayClose, format.mintick), style=label.style_none, textcolor=prevDayCloseColor, size=size.normal, xloc=xloc.bar_index)
     
+    // 更新今日50%线（每根K线都更新，因为日内高低点会变化）
+    if showTodayMidLevel and not na(rthTodayHigh) and not na(rthTodayLow)
+        float todayMid = (rthTodayHigh + rthTodayLow) / 2
+        int leftIdxMid = nz(todaySessionStartIndex, bar_index)
+        line.delete(todayMidLine)
+        label.delete(todayMidLabel)
+        todayMidLine := line.new(leftIdxMid, todayMid, bar_index + 1, todayMid, color=todayMidColor, width=prevDayLineWidth, style=keyLevelStyle, extend=keyLevelExtend)
+        todayMidLabel := label.new(bar_index, todayMid, "50% " + str.tostring(todayMid, format.mintick), style=label.style_none, textcolor=todayMidColor, size=size.normal, xloc=xloc.bar_index)
+
     // 更新标签位置到最右边（每根K线都更新）
     int rightOffset = bar_index + 5
     if not na(todayOpenLine)
@@ -438,7 +487,9 @@ if showPrevDayLevels
         line.set_x2(prevDayLowLine, rightOffset)
     if not na(prevDayCloseLine)
         line.set_x2(prevDayCloseLine, rightOffset)
-    
+    if not na(todayMidLine)
+        line.set_x2(todayMidLine, rightOffset)
+
     if not na(todayOpenLabel)
         label.set_x(todayOpenLabel, rightOffset)
     if not na(prevDayHighLabel)
@@ -447,6 +498,8 @@ if showPrevDayLevels
         label.set_x(prevDayLowLabel, rightOffset)
     if not na(prevDayCloseLabel)
         label.set_x(prevDayCloseLabel, rightOffset)
+    if not na(todayMidLabel)
+        label.set_x(todayMidLabel, rightOffset)
 
 // ================================================================= //
 // ===== 日内波动显示（当前 & 平均）===== //
@@ -566,6 +619,36 @@ if barstate.isnew and hasOpenCloseGap
     string ocText = isOpenGapUp ? "Gap↑ " + str.tostring(math.abs(openCloseGapDiff), format.mintick) : "Gap↓ " + str.tostring(math.abs(openCloseGapDiff), format.mintick)
     color gapBg = isOpenGapUp ? openCloseGapUpColor : openCloseGapDownColor
     label.new(bar_index, openCloseGapMid, ocText, style=isOpenGapUp ? label.style_label_up : label.style_label_down, color=gapBg, textcolor=color.white, size=gapLabelSize, yloc=yloc.price)
+
+// ================================================================= //
+// ===== PA 形态 (ii, ioi, iii) =====
+// ================================================================= //
+
+bool isInside = high <= high[1] and low >= low[1]
+bool isOutside = high >= high[1] and low <= low[1]
+
+bool pat_ii = isInside and isInside[1]
+bool pat_iii = pat_ii and isInside[2]
+bool pat_ioi = isInside and isOutside[1]
+bool pat_oo = isOutside and isOutside[1]
+
+string paText = ""
+if showPA_III and pat_iii
+    paText := "iii"
+else if showPA_IOI and pat_ioi
+    paText := "ioi"
+else if showPA_II and pat_ii
+    paText := "ii"
+else if showPA_OO and pat_oo
+    paText := "oo"
+
+if paText != ""
+    paSize = paTextSize == "tiny" ? size.tiny :
+             paTextSize == "small" ? size.small :
+             paTextSize == "normal" ? size.normal :
+             size.large
+    
+    label.new(bar_index, high, paText, style=label.style_label_down, color=color.new(color.white, 100), textcolor=paTextColor, size=paSize)
 
 // ================================================================= //
 // ===== 缺口检测功能 =====
