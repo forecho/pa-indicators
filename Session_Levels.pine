@@ -1,0 +1,282 @@
+//@version=6
+indicator("日内关键价位", overlay=true, max_lines_count=20, max_labels_count=20)
+
+// ================================================================= //
+// ===== 参数设置 =====
+// ================================================================= //
+
+string grpSession = "时段设置"
+rthSession = input.session("0930-1615", "RTH（美东时间）", group=grpSession)
+asiaSession = input.session("2000-0000", "亚洲时段（美东时间）", group=grpSession, tooltip="默认统计美东时间 20:00 至次日 00:00")
+londonSession = input.session("0200-0500", "伦敦时段（美东时间）", group=grpSession, tooltip="默认统计美东时间 02:00 至 05:00")
+
+string grpDisplay = "显示设置"
+showTodayOpen = input.bool(true, "今日开盘", group=grpDisplay)
+showPrevDayClose = input.bool(true, "昨日收盘", group=grpDisplay)
+showPrevDayHigh = input.bool(true, "昨日高点", group=grpDisplay)
+showPrevDayLow = input.bool(true, "昨日低点", group=grpDisplay)
+showLondonHigh = input.bool(true, "伦敦高点", group=grpDisplay)
+showLondonLow = input.bool(true, "伦敦低点", group=grpDisplay)
+showAsiaHigh = input.bool(true, "亚洲高点", group=grpDisplay)
+showAsiaLow = input.bool(true, "亚洲低点", group=grpDisplay)
+
+string grpStyle = "样式设置"
+todayOpenColor = input.color(color.aqua, "今日开盘颜色", group=grpStyle)
+prevDayCloseColor = input.color(color.red, "昨日收盘颜色", group=grpStyle)
+prevDayHighColor = input.color(color.gray, "昨日高点颜色", group=grpStyle)
+prevDayLowColor = input.color(color.gray, "昨日低点颜色", group=grpStyle)
+londonColor = input.color(color.blue, "伦敦高低点颜色", group=grpStyle)
+asiaColor = input.color(#FF9800, "亚洲高低点颜色", group=grpStyle)
+lineStyleInput = input.string("虚线", "线条样式", options=["实线", "虚线", "点线"], group=grpStyle)
+lineWidth = input.int(1, "线条宽度", minval=1, maxval=4, group=grpStyle)
+rightOffsetBars = input.int(5, "标签右移 K 线数", minval=0, maxval=50, group=grpStyle)
+
+levelLineStyle = lineStyleInput == "实线" ? line.style_solid : lineStyleInput == "虚线" ? line.style_dashed : line.style_dotted
+
+// ================================================================= //
+// ===== RTH 今日与昨日关键价位 =====
+// ================================================================= //
+
+bool inRth = not na(time(timeframe.period, rthSession, "America/New_York"))
+bool newRthDay = ta.change(time("D", "America/New_York")) != 0
+bool rthStart = inRth and (newRthDay or not inRth[1])
+
+var float rthTodayOpen = na
+var float rthTodayHigh = na
+var float rthTodayLow = na
+var float rthTodayClose = na
+var float closeBuf1 = na
+var float closeBuf2 = na
+var float closeBuf3 = na
+var int todayRthStartIndex = na
+
+var float rthYesterdayHigh = na
+var float rthYesterdayLow = na
+var float rthYesterdayClose = na
+var int yesterdayRthStartIndex = na
+
+if rthStart
+    if not na(todayRthStartIndex)
+        yesterdayRthStartIndex := todayRthStartIndex
+    todayRthStartIndex := bar_index
+
+    if not na(rthTodayOpen)
+        rthYesterdayHigh := rthTodayHigh
+        rthYesterdayLow := rthTodayLow
+        rthYesterdayClose := rthTodayClose
+
+    rthTodayOpen := open
+    rthTodayHigh := high
+    rthTodayLow := low
+    rthTodayClose := na
+    closeBuf1 := na
+    closeBuf2 := na
+    closeBuf3 := na
+
+if inRth
+    if na(rthTodayOpen)
+        rthTodayOpen := open
+        rthTodayHigh := high
+        rthTodayLow := low
+        todayRthStartIndex := bar_index
+        rthTodayClose := na
+        closeBuf1 := na
+        closeBuf2 := na
+        closeBuf3 := na
+    else
+        rthTodayHigh := na(rthTodayHigh) ? high : math.max(rthTodayHigh, high)
+        rthTodayLow := na(rthTodayLow) ? low : math.min(rthTodayLow, low)
+
+    // 与 PA_Indicators.pine 一致，昨日收盘排除 RTH 最后 3 根 K 线。
+    closeBuf3 := closeBuf2
+    closeBuf2 := closeBuf1
+    closeBuf1 := close
+    if not na(closeBuf3)
+        rthTodayClose := closeBuf3
+
+// ================================================================= //
+// ===== 亚洲与伦敦时段高低点 =====
+// ================================================================= //
+
+bool inAsia = not na(time(timeframe.period, asiaSession, "America/New_York"))
+bool asiaStart = inAsia and not inAsia[1]
+var float asiaHigh = na
+var float asiaLow = na
+var int asiaStartIndex = na
+
+if asiaStart
+    asiaHigh := high
+    asiaLow := low
+    asiaStartIndex := bar_index
+else if inAsia
+    asiaHigh := na(asiaHigh) ? high : math.max(asiaHigh, high)
+    asiaLow := na(asiaLow) ? low : math.min(asiaLow, low)
+
+bool inLondon = not na(time(timeframe.period, londonSession, "America/New_York"))
+bool londonStart = inLondon and not inLondon[1]
+var float londonHigh = na
+var float londonLow = na
+var int londonStartIndex = na
+
+if londonStart
+    londonHigh := high
+    londonLow := low
+    londonStartIndex := bar_index
+else if inLondon
+    londonHigh := na(londonHigh) ? high : math.max(londonHigh, high)
+    londonLow := na(londonLow) ? low : math.min(londonLow, low)
+
+// ================================================================= //
+// ===== 绘制价位线与标签 =====
+// ================================================================= //
+
+var line todayOpenLine = na
+var line prevDayCloseLine = na
+var line prevDayHighLine = na
+var line prevDayLowLine = na
+var line londonHighLine = na
+var line londonLowLine = na
+var line asiaHighLine = na
+var line asiaLowLine = na
+
+var label todayOpenLabel = na
+var label prevDayCloseLabel = na
+var label prevDayHighLabel = na
+var label prevDayLowLabel = na
+var label londonHighLabel = na
+var label londonLowLabel = na
+var label asiaHighLabel = na
+var label asiaLowLabel = na
+
+// 新 RTH 交易日开始时重建 RTH 价位。
+if rthStart
+    line.delete(todayOpenLine)
+    line.delete(prevDayCloseLine)
+    line.delete(prevDayHighLine)
+    line.delete(prevDayLowLine)
+    label.delete(todayOpenLabel)
+    label.delete(prevDayCloseLabel)
+    label.delete(prevDayHighLabel)
+    label.delete(prevDayLowLabel)
+
+    todayOpenLine := showTodayOpen and not na(rthTodayOpen) ? line.new(nz(todayRthStartIndex, bar_index), rthTodayOpen, bar_index, rthTodayOpen, color=todayOpenColor, width=lineWidth, style=levelLineStyle) : na
+    prevDayCloseLine := showPrevDayClose and not na(rthYesterdayClose) ? line.new(nz(yesterdayRthStartIndex, bar_index), rthYesterdayClose, bar_index, rthYesterdayClose, color=prevDayCloseColor, width=lineWidth, style=levelLineStyle) : na
+    prevDayHighLine := showPrevDayHigh and not na(rthYesterdayHigh) ? line.new(nz(yesterdayRthStartIndex, bar_index), rthYesterdayHigh, bar_index, rthYesterdayHigh, color=prevDayHighColor, width=lineWidth, style=levelLineStyle) : na
+    prevDayLowLine := showPrevDayLow and not na(rthYesterdayLow) ? line.new(nz(yesterdayRthStartIndex, bar_index), rthYesterdayLow, bar_index, rthYesterdayLow, color=prevDayLowColor, width=lineWidth, style=levelLineStyle) : na
+
+    todayOpenLabel := showTodayOpen and not na(rthTodayOpen) ? label.new(bar_index, rthTodayOpen, "开盘 " + str.tostring(rthTodayOpen, format.mintick), style=label.style_none, textcolor=todayOpenColor) : na
+    prevDayCloseLabel := showPrevDayClose and not na(rthYesterdayClose) ? label.new(bar_index, rthYesterdayClose, "昨收 " + str.tostring(rthYesterdayClose, format.mintick), style=label.style_none, textcolor=prevDayCloseColor) : na
+    prevDayHighLabel := showPrevDayHigh and not na(rthYesterdayHigh) ? label.new(bar_index, rthYesterdayHigh, "昨高 " + str.tostring(rthYesterdayHigh, format.mintick), style=label.style_none, textcolor=prevDayHighColor) : na
+    prevDayLowLabel := showPrevDayLow and not na(rthYesterdayLow) ? label.new(bar_index, rthYesterdayLow, "昨低 " + str.tostring(rthYesterdayLow, format.mintick), style=label.style_none, textcolor=prevDayLowColor) : na
+
+// 各时段开始时清除上一交易日的同名线，并从本时段第一根 K 线重新统计。
+if asiaStart
+    line.delete(asiaHighLine)
+    line.delete(asiaLowLine)
+    label.delete(asiaHighLabel)
+    label.delete(asiaLowLabel)
+    asiaHighLine := na
+    asiaLowLine := na
+    asiaHighLabel := na
+    asiaLowLabel := na
+
+if londonStart
+    line.delete(londonHighLine)
+    line.delete(londonLowLine)
+    label.delete(londonHighLabel)
+    label.delete(londonLowLabel)
+    londonHighLine := na
+    londonLowLine := na
+    londonHighLabel := na
+    londonLowLabel := na
+
+// 时段进行中，高低点可能变化，因此按最新值更新线条和标签。
+if inAsia
+    line.delete(asiaHighLine)
+    line.delete(asiaLowLine)
+    label.delete(asiaHighLabel)
+    label.delete(asiaLowLabel)
+    asiaHighLine := showAsiaHigh and not na(asiaHigh) ? line.new(nz(asiaStartIndex, bar_index), asiaHigh, bar_index, asiaHigh, color=asiaColor, width=lineWidth, style=levelLineStyle) : na
+    asiaLowLine := showAsiaLow and not na(asiaLow) ? line.new(nz(asiaStartIndex, bar_index), asiaLow, bar_index, asiaLow, color=asiaColor, width=lineWidth, style=levelLineStyle) : na
+    asiaHighLabel := showAsiaHigh and not na(asiaHigh) ? label.new(bar_index, asiaHigh, "亚洲高 " + str.tostring(asiaHigh, format.mintick), style=label.style_none, textcolor=asiaColor) : na
+    asiaLowLabel := showAsiaLow and not na(asiaLow) ? label.new(bar_index, asiaLow, "亚洲低 " + str.tostring(asiaLow, format.mintick), style=label.style_none, textcolor=asiaColor) : na
+
+if inLondon
+    line.delete(londonHighLine)
+    line.delete(londonLowLine)
+    label.delete(londonHighLabel)
+    label.delete(londonLowLabel)
+    londonHighLine := showLondonHigh and not na(londonHigh) ? line.new(nz(londonStartIndex, bar_index), londonHigh, bar_index, londonHigh, color=londonColor, width=lineWidth, style=levelLineStyle) : na
+    londonLowLine := showLondonLow and not na(londonLow) ? line.new(nz(londonStartIndex, bar_index), londonLow, bar_index, londonLow, color=londonColor, width=lineWidth, style=levelLineStyle) : na
+    londonHighLabel := showLondonHigh and not na(londonHigh) ? label.new(bar_index, londonHigh, "伦敦高 " + str.tostring(londonHigh, format.mintick), style=label.style_none, textcolor=londonColor) : na
+    londonLowLabel := showLondonLow and not na(londonLow) ? label.new(bar_index, londonLow, "伦敦低 " + str.tostring(londonLow, format.mintick), style=label.style_none, textcolor=londonColor) : na
+
+// 单独关闭某一价位时，立即移除其线条和标签。
+if not showTodayOpen
+    line.delete(todayOpenLine)
+    label.delete(todayOpenLabel)
+    todayOpenLine := na
+    todayOpenLabel := na
+if not showPrevDayClose
+    line.delete(prevDayCloseLine)
+    label.delete(prevDayCloseLabel)
+    prevDayCloseLine := na
+    prevDayCloseLabel := na
+if not showPrevDayHigh
+    line.delete(prevDayHighLine)
+    label.delete(prevDayHighLabel)
+    prevDayHighLine := na
+    prevDayHighLabel := na
+if not showPrevDayLow
+    line.delete(prevDayLowLine)
+    label.delete(prevDayLowLabel)
+    prevDayLowLine := na
+    prevDayLowLabel := na
+if not showLondonHigh
+    line.delete(londonHighLine)
+    label.delete(londonHighLabel)
+    londonHighLine := na
+    londonHighLabel := na
+if not showLondonLow
+    line.delete(londonLowLine)
+    label.delete(londonLowLabel)
+    londonLowLine := na
+    londonLowLabel := na
+if not showAsiaHigh
+    line.delete(asiaHighLine)
+    label.delete(asiaHighLabel)
+    asiaHighLine := na
+    asiaHighLabel := na
+if not showAsiaLow
+    line.delete(asiaLowLine)
+    label.delete(asiaLowLabel)
+    asiaLowLine := na
+    asiaLowLabel := na
+
+// 所有有效价位持续延伸至图表右侧，并把标签保持在最右端。
+int rightIndex = bar_index + rightOffsetBars
+
+if not na(todayOpenLine)
+    line.set_x2(todayOpenLine, rightIndex)
+    label.set_x(todayOpenLabel, rightIndex)
+if not na(prevDayCloseLine)
+    line.set_x2(prevDayCloseLine, rightIndex)
+    label.set_x(prevDayCloseLabel, rightIndex)
+if not na(prevDayHighLine)
+    line.set_x2(prevDayHighLine, rightIndex)
+    label.set_x(prevDayHighLabel, rightIndex)
+if not na(prevDayLowLine)
+    line.set_x2(prevDayLowLine, rightIndex)
+    label.set_x(prevDayLowLabel, rightIndex)
+if not na(londonHighLine)
+    line.set_x2(londonHighLine, rightIndex)
+    label.set_x(londonHighLabel, rightIndex)
+if not na(londonLowLine)
+    line.set_x2(londonLowLine, rightIndex)
+    label.set_x(londonLowLabel, rightIndex)
+if not na(asiaHighLine)
+    line.set_x2(asiaHighLine, rightIndex)
+    label.set_x(asiaHighLabel, rightIndex)
+if not na(asiaLowLine)
+    line.set_x2(asiaLowLine, rightIndex)
+    label.set_x(asiaLowLabel, rightIndex)
