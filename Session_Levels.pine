@@ -7,6 +7,7 @@ indicator("日内关键价位", overlay=true, max_lines_count=20, max_labels_cou
 
 string grpSession = "时段设置"
 rthSession = input.session("0930-1615", "RTH（美东时间）", group=grpSession)
+rthCloseTime = input.string("1600", "RTH 收盘时间（美东时间）", group=grpSession, tooltip="格式 HHMM。昨收取收盘时间之前（含）最后一根 K 线的收盘价，不受图表周期影响。")
 asiaSession = input.session("2000-0000", "亚洲时段（美东时间）", group=grpSession, tooltip="默认统计美东时间 20:00 至次日 00:00")
 londonSession = input.session("0200-0500", "伦敦时段（美东时间）", group=grpSession, tooltip="默认统计美东时间 02:00 至 05:00")
 
@@ -35,20 +36,47 @@ sameLevelOffsetBars = input.int(3, "同值线错开 K 线数", minval=1, maxval=
 levelLineStyle = lineStyleInput == "实线" ? line.style_solid : lineStyleInput == "虚线" ? line.style_dashed : line.style_dotted
 
 // ================================================================= //
+// ===== 时段判定（统一按美东钟表时间，不依赖品种交易日归属） =====
+// ================================================================= //
+
+// time(timeframe, session) 对跨午夜时段（如 2000-0000）会按品种"交易日"归属判定，
+// 期货/外汇/加密的交易日边界与美东自然日不一致，会把 00:00 之后的 K 线也算进亚洲时段，
+// 导致亚洲低点被盘前价格污染。这里改为直接比较美东时间的分钟数。
+string tzEt = "America/New_York"
+
+hhmmToMinutes(string hhmm) =>
+    int h = int(str.tonumber(str.substring(hhmm, 0, 2)))
+    int m = int(str.tonumber(str.substring(hhmm, 2, 4)))
+    h * 60 + m
+
+// 解析 "HHMM-HHMM[:1234567]"，忽略星期过滤部分。
+sessionBounds(string sess) =>
+    string core = str.contains(sess, ":") ? str.substring(sess, 0, str.pos(sess, ":")) : sess
+    [hhmmToMinutes(str.substring(core, 0, 4)), hhmmToMinutes(str.substring(core, 5, 9))]
+
+int etMinute = hour(time, tzEt) * 60 + minute(time, tzEt)
+
+// 以 K 线开盘时间判断是否落在时段内，结束时间不含（与 TradingView 一致）。
+inSessionEt(int startMin, int endMin) =>
+    startMin == endMin ? true : startMin < endMin ? etMinute >= startMin and etMinute < endMin : etMinute >= startMin or etMinute < endMin
+
+[rthStartMin, rthEndMin] = sessionBounds(rthSession)
+[asiaStartMin, asiaEndMin] = sessionBounds(asiaSession)
+[londonStartMin, londonEndMin] = sessionBounds(londonSession)
+int rthCloseMin = hhmmToMinutes(rthCloseTime)
+
+// ================================================================= //
 // ===== RTH 今日与昨日关键价位 =====
 // ================================================================= //
 
-bool inRth = not na(time(timeframe.period, rthSession, "America/New_York"))
-bool newRthDay = ta.change(time("D", "America/New_York")) != 0
-bool rthStart = inRth and (newRthDay or not inRth[1])
+bool inRth = inSessionEt(rthStartMin, rthEndMin)
+bool newEtDay = ta.change(dayofmonth(time, tzEt)) != 0
+bool rthStart = inRth and (newEtDay or not inRth[1])
 
 var float rthTodayOpen = na
 var float rthTodayHigh = na
 var float rthTodayLow = na
 var float rthTodayClose = na
-var float closeBuf1 = na
-var float closeBuf2 = na
-var float closeBuf3 = na
 var int todayRthStartIndex = na
 
 var float rthYesterdayHigh = na
@@ -70,9 +98,6 @@ if rthStart
     rthTodayHigh := high
     rthTodayLow := low
     rthTodayClose := na
-    closeBuf1 := na
-    closeBuf2 := na
-    closeBuf3 := na
 
 if inRth
     if na(rthTodayOpen)
@@ -81,25 +106,20 @@ if inRth
         rthTodayLow := low
         todayRthStartIndex := bar_index
         rthTodayClose := na
-        closeBuf1 := na
-        closeBuf2 := na
-        closeBuf3 := na
     else
         rthTodayHigh := na(rthTodayHigh) ? high : math.max(rthTodayHigh, high)
         rthTodayLow := na(rthTodayLow) ? low : math.min(rthTodayLow, low)
 
-    // 与 PA_Indicators.pine 一致，昨日收盘排除 RTH 最后 3 根 K 线。
-    closeBuf3 := closeBuf2
-    closeBuf2 := closeBuf1
-    closeBuf1 := close
-    if not na(closeBuf3)
-        rthTodayClose := closeBuf3
+    // 昨收取"开盘时间早于收盘时间"的最后一根 K 线收盘价，
+    // 即 1 分钟图取 15:59、5 分钟图取 15:55、15 分钟图取 15:45，结果都对应 16:00 收盘。
+    if etMinute < rthCloseMin
+        rthTodayClose := close
 
 // ================================================================= //
 // ===== 亚洲与伦敦时段高低点 =====
 // ================================================================= //
 
-bool inAsia = not na(time(timeframe.period, asiaSession, "America/New_York"))
+bool inAsia = inSessionEt(asiaStartMin, asiaEndMin)
 bool asiaStart = inAsia and not inAsia[1]
 var float asiaHigh = na
 var float asiaLow = na
@@ -113,7 +133,7 @@ else if inAsia
     asiaHigh := na(asiaHigh) ? high : math.max(asiaHigh, high)
     asiaLow := na(asiaLow) ? low : math.min(asiaLow, low)
 
-bool inLondon = not na(time(timeframe.period, londonSession, "America/New_York"))
+bool inLondon = inSessionEt(londonStartMin, londonEndMin)
 bool londonStart = inLondon and not inLondon[1]
 var float londonHigh = na
 var float londonLow = na
