@@ -31,7 +31,8 @@ asiaColor = input.color(#FF9800, "亚洲高低点颜色", group=grpStyle)
 lineStyleInput = input.string("虚线", "线条样式", options=["实线", "虚线", "点线"], group=grpStyle)
 lineWidth = input.int(1, "线条宽度", minval=1, maxval=4, group=grpStyle)
 rightOffsetBars = input.int(5, "标签右移 K 线数", minval=0, maxval=50, group=grpStyle)
-sameLevelOffsetBars = input.int(3, "同值线错开 K 线数", minval=1, maxval=20, group=grpStyle, tooltip="当多个价位相同时，后面的线和标签依次向右错开。")
+sameLevelOffsetBars = input.int(8, "重叠标签错开 K 线数", minval=1, maxval=40, group=grpStyle, tooltip="价位相近时，后面的线和标签依次向右错开这么多根 K 线，避免文字重叠。")
+overlapTicks = input.int(12, "标签重叠判定距离(跳动)", minval=0, maxval=500, group=grpStyle, tooltip="两个价位相差不超过这么多个最小跳动时视为会重叠。0 表示只对完全相同的价位错开。")
 
 levelLineStyle = lineStyleInput == "实线" ? line.style_solid : lineStyleInput == "虚线" ? line.style_dashed : line.style_dotted
 
@@ -185,10 +186,10 @@ if rthStart
     prevDayHighLine := showPrevDayHigh and not na(rthYesterdayHigh) ? line.new(nz(yesterdayRthStartIndex, bar_index), rthYesterdayHigh, bar_index, rthYesterdayHigh, color=prevDayHighColor, width=lineWidth, style=levelLineStyle) : na
     prevDayLowLine := showPrevDayLow and not na(rthYesterdayLow) ? line.new(nz(yesterdayRthStartIndex, bar_index), rthYesterdayLow, bar_index, rthYesterdayLow, color=prevDayLowColor, width=lineWidth, style=levelLineStyle) : na
 
-    todayOpenLabel := showTodayOpen and not na(rthTodayOpen) ? label.new(bar_index, rthTodayOpen, "开盘 " + str.tostring(rthTodayOpen, format.mintick), style=label.style_none, textcolor=todayOpenColor) : na
-    prevDayCloseLabel := showPrevDayClose and not na(rthYesterdayClose) ? label.new(bar_index, rthYesterdayClose, "昨收 " + str.tostring(rthYesterdayClose, format.mintick), style=label.style_none, textcolor=prevDayCloseColor) : na
-    prevDayHighLabel := showPrevDayHigh and not na(rthYesterdayHigh) ? label.new(bar_index, rthYesterdayHigh, "昨高 " + str.tostring(rthYesterdayHigh, format.mintick), style=label.style_none, textcolor=prevDayHighColor) : na
-    prevDayLowLabel := showPrevDayLow and not na(rthYesterdayLow) ? label.new(bar_index, rthYesterdayLow, "昨低 " + str.tostring(rthYesterdayLow, format.mintick), style=label.style_none, textcolor=prevDayLowColor) : na
+    todayOpenLabel := showTodayOpen and not na(rthTodayOpen) ? label.new(bar_index, rthTodayOpen, "开盘 " + str.tostring(rthTodayOpen, format.mintick), style=label.style_label_left, color=color.new(color.white, 100), textcolor=todayOpenColor) : na
+    prevDayCloseLabel := showPrevDayClose and not na(rthYesterdayClose) ? label.new(bar_index, rthYesterdayClose, "昨收 " + str.tostring(rthYesterdayClose, format.mintick), style=label.style_label_left, color=color.new(color.white, 100), textcolor=prevDayCloseColor) : na
+    prevDayHighLabel := showPrevDayHigh and not na(rthYesterdayHigh) ? label.new(bar_index, rthYesterdayHigh, "昨高 " + str.tostring(rthYesterdayHigh, format.mintick), style=label.style_label_left, color=color.new(color.white, 100), textcolor=prevDayHighColor) : na
+    prevDayLowLabel := showPrevDayLow and not na(rthYesterdayLow) ? label.new(bar_index, rthYesterdayLow, "昨低 " + str.tostring(rthYesterdayLow, format.mintick), style=label.style_label_left, color=color.new(color.white, 100), textcolor=prevDayLowColor) : na
 
 // 各时段开始时清除上一交易日的同名线，并从本时段第一根 K 线重新统计。
 if asiaStart
@@ -219,8 +220,8 @@ if inAsia
     label.delete(asiaLowLabel)
     asiaHighLine := showAsiaHigh and not na(asiaHigh) ? line.new(nz(asiaStartIndex, bar_index), asiaHigh, bar_index, asiaHigh, color=asiaColor, width=lineWidth, style=levelLineStyle) : na
     asiaLowLine := showAsiaLow and not na(asiaLow) ? line.new(nz(asiaStartIndex, bar_index), asiaLow, bar_index, asiaLow, color=asiaColor, width=lineWidth, style=levelLineStyle) : na
-    asiaHighLabel := showAsiaHigh and not na(asiaHigh) ? label.new(bar_index, asiaHigh, "亚洲高 " + str.tostring(asiaHigh, format.mintick), style=label.style_none, textcolor=asiaColor) : na
-    asiaLowLabel := showAsiaLow and not na(asiaLow) ? label.new(bar_index, asiaLow, "亚洲低 " + str.tostring(asiaLow, format.mintick), style=label.style_none, textcolor=asiaColor) : na
+    asiaHighLabel := showAsiaHigh and not na(asiaHigh) ? label.new(bar_index, asiaHigh, "亚洲高 " + str.tostring(asiaHigh, format.mintick), style=label.style_label_left, color=color.new(color.white, 100), textcolor=asiaColor) : na
+    asiaLowLabel := showAsiaLow and not na(asiaLow) ? label.new(bar_index, asiaLow, "亚洲低 " + str.tostring(asiaLow, format.mintick), style=label.style_label_left, color=color.new(color.white, 100), textcolor=asiaColor) : na
 
 if inLondon
     line.delete(londonHighLine)
@@ -229,8 +230,8 @@ if inLondon
     label.delete(londonLowLabel)
     londonHighLine := showLondonHigh and not na(londonHigh) ? line.new(nz(londonStartIndex, bar_index), londonHigh, bar_index, londonHigh, color=londonColor, width=lineWidth, style=levelLineStyle) : na
     londonLowLine := showLondonLow and not na(londonLow) ? line.new(nz(londonStartIndex, bar_index), londonLow, bar_index, londonLow, color=londonColor, width=lineWidth, style=levelLineStyle) : na
-    londonHighLabel := showLondonHigh and not na(londonHigh) ? label.new(bar_index, londonHigh, "伦敦高 " + str.tostring(londonHigh, format.mintick), style=label.style_none, textcolor=londonColor) : na
-    londonLowLabel := showLondonLow and not na(londonLow) ? label.new(bar_index, londonLow, "伦敦低 " + str.tostring(londonLow, format.mintick), style=label.style_none, textcolor=londonColor) : na
+    londonHighLabel := showLondonHigh and not na(londonHigh) ? label.new(bar_index, londonHigh, "伦敦高 " + str.tostring(londonHigh, format.mintick), style=label.style_label_left, color=color.new(color.white, 100), textcolor=londonColor) : na
+    londonLowLabel := showLondonLow and not na(londonLow) ? label.new(bar_index, londonLow, "伦敦低 " + str.tostring(londonLow, format.mintick), style=label.style_label_left, color=color.new(color.white, 100), textcolor=londonColor) : na
 
 // 单独关闭某一价位时，立即移除其线条和标签。
 if not showTodayOpen
@@ -277,50 +278,23 @@ if not showAsiaLow
 // 所有有效价位持续延伸至图表右侧，并把标签保持在最右端。
 int rightIndex = bar_index + rightOffsetBars
 
-// 同值价位如果使用相同的终点，会导致线和标签完全重叠。
-// 按绘制顺序为重复价位依次增加终点偏移，第一条保持原长度。
-float sameLevelTolerance = syminfo.mintick * 0.5
-bool hasTodayOpen = showTodayOpen and not na(rthTodayOpen)
-bool hasPrevDayClose = showPrevDayClose and not na(rthYesterdayClose)
-bool hasPrevDayHigh = showPrevDayHigh and not na(rthYesterdayHigh)
-bool hasPrevDayLow = showPrevDayLow and not na(rthYesterdayLow)
-bool hasLondonHigh = showLondonHigh and not na(londonHigh)
-bool hasLondonLow = showLondonLow and not na(londonLow)
-bool hasAsiaHigh = showAsiaHigh and not na(asiaHigh)
+// 价位相近的线如果使用相同的终点，文字会叠在一起。
+// 按绘制顺序统计前面有几条相近的线，依次向右错开；标签统一左对齐，错开后仍整齐。
+float overlapTolerance = syminfo.mintick * math.max(overlapTicks, 0.5)
 
-sameLevel(float first, float second) =>
-    not na(first) and not na(second) and math.abs(first - second) <= sameLevelTolerance
+array<line> levelLines = array.from(todayOpenLine, prevDayCloseLine, prevDayHighLine, prevDayLowLine, londonHighLine, londonLowLine, asiaHighLine, asiaLowLine)
+array<label> levelLabels = array.from(todayOpenLabel, prevDayCloseLabel, prevDayHighLabel, prevDayLowLabel, londonHighLabel, londonLowLabel, asiaHighLabel, asiaLowLabel)
+array<float> levelPrices = array.from(rthTodayOpen, rthYesterdayClose, rthYesterdayHigh, rthYesterdayLow, londonHigh, londonLow, asiaHigh, asiaLow)
 
-int todayOpenEnd = rightIndex
-int prevDayCloseEnd = rightIndex + (hasTodayOpen and sameLevel(rthTodayOpen, rthYesterdayClose) ? sameLevelOffsetBars : 0)
-int prevDayHighEnd = rightIndex + ((hasTodayOpen and sameLevel(rthTodayOpen, rthYesterdayHigh) ? 1 : 0) + (hasPrevDayClose and sameLevel(rthYesterdayClose, rthYesterdayHigh) ? 1 : 0)) * sameLevelOffsetBars
-int prevDayLowEnd = rightIndex + ((hasTodayOpen and sameLevel(rthTodayOpen, rthYesterdayLow) ? 1 : 0) + (hasPrevDayClose and sameLevel(rthYesterdayClose, rthYesterdayLow) ? 1 : 0) + (hasPrevDayHigh and sameLevel(rthYesterdayHigh, rthYesterdayLow) ? 1 : 0)) * sameLevelOffsetBars
-int londonHighEnd = rightIndex + ((hasTodayOpen and sameLevel(rthTodayOpen, londonHigh) ? 1 : 0) + (hasPrevDayClose and sameLevel(rthYesterdayClose, londonHigh) ? 1 : 0) + (hasPrevDayHigh and sameLevel(rthYesterdayHigh, londonHigh) ? 1 : 0) + (hasPrevDayLow and sameLevel(rthYesterdayLow, londonHigh) ? 1 : 0)) * sameLevelOffsetBars
-int londonLowEnd = rightIndex + ((hasTodayOpen and sameLevel(rthTodayOpen, londonLow) ? 1 : 0) + (hasPrevDayClose and sameLevel(rthYesterdayClose, londonLow) ? 1 : 0) + (hasPrevDayHigh and sameLevel(rthYesterdayHigh, londonLow) ? 1 : 0) + (hasPrevDayLow and sameLevel(rthYesterdayLow, londonLow) ? 1 : 0) + (hasLondonHigh and sameLevel(londonHigh, londonLow) ? 1 : 0)) * sameLevelOffsetBars
-int asiaHighEnd = rightIndex + ((hasTodayOpen and sameLevel(rthTodayOpen, asiaHigh) ? 1 : 0) + (hasPrevDayClose and sameLevel(rthYesterdayClose, asiaHigh) ? 1 : 0) + (hasPrevDayHigh and sameLevel(rthYesterdayHigh, asiaHigh) ? 1 : 0) + (hasPrevDayLow and sameLevel(rthYesterdayLow, asiaHigh) ? 1 : 0) + (hasLondonHigh and sameLevel(londonHigh, asiaHigh) ? 1 : 0) + (hasLondonLow and sameLevel(londonLow, asiaHigh) ? 1 : 0)) * sameLevelOffsetBars
-int asiaLowEnd = rightIndex + ((hasTodayOpen and sameLevel(rthTodayOpen, asiaLow) ? 1 : 0) + (hasPrevDayClose and sameLevel(rthYesterdayClose, asiaLow) ? 1 : 0) + (hasPrevDayHigh and sameLevel(rthYesterdayHigh, asiaLow) ? 1 : 0) + (hasPrevDayLow and sameLevel(rthYesterdayLow, asiaLow) ? 1 : 0) + (hasLondonHigh and sameLevel(londonHigh, asiaLow) ? 1 : 0) + (hasLondonLow and sameLevel(londonLow, asiaLow) ? 1 : 0) + (hasAsiaHigh and sameLevel(asiaHigh, asiaLow) ? 1 : 0)) * sameLevelOffsetBars
-
-if not na(todayOpenLine)
-    line.set_x2(todayOpenLine, todayOpenEnd)
-    label.set_x(todayOpenLabel, todayOpenEnd)
-if not na(prevDayCloseLine)
-    line.set_x2(prevDayCloseLine, prevDayCloseEnd)
-    label.set_x(prevDayCloseLabel, prevDayCloseEnd)
-if not na(prevDayHighLine)
-    line.set_x2(prevDayHighLine, prevDayHighEnd)
-    label.set_x(prevDayHighLabel, prevDayHighEnd)
-if not na(prevDayLowLine)
-    line.set_x2(prevDayLowLine, prevDayLowEnd)
-    label.set_x(prevDayLowLabel, prevDayLowEnd)
-if not na(londonHighLine)
-    line.set_x2(londonHighLine, londonHighEnd)
-    label.set_x(londonHighLabel, londonHighEnd)
-if not na(londonLowLine)
-    line.set_x2(londonLowLine, londonLowEnd)
-    label.set_x(londonLowLabel, londonLowEnd)
-if not na(asiaHighLine)
-    line.set_x2(asiaHighLine, asiaHighEnd)
-    label.set_x(asiaHighLabel, asiaHighEnd)
-if not na(asiaLowLine)
-    line.set_x2(asiaLowLine, asiaLowEnd)
-    label.set_x(asiaLowLabel, asiaLowEnd)
+for i = 0 to array.size(levelLines) - 1
+    line ln = array.get(levelLines, i)
+    if not na(ln)
+        float price = array.get(levelPrices, i)
+        int overlaps = 0
+        if i > 0
+            for j = 0 to i - 1
+                if not na(array.get(levelLines, j)) and math.abs(price - array.get(levelPrices, j)) <= overlapTolerance
+                    overlaps += 1
+        int endIndex = rightIndex + overlaps * sameLevelOffsetBars
+        line.set_x2(ln, endIndex)
+        label.set_x(array.get(levelLabels, i), endIndex)

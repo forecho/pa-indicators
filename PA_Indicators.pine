@@ -5,12 +5,15 @@ indicator("PA Indicators", overlay=true, max_labels_count=500, max_boxes_count=5
 string grp_ema = "EMA 设置"
 ema20Length = input.int(20, "EMA20", minval=1, group=grp_ema)
 ema240Length = input.int(240, "EMA240", minval=1, group=grp_ema)
+ema20Color = input.color(color.green, "EMA20 颜色", group=grp_ema)
+ema240Color = input.color(color.yellow, "EMA240 颜色", group=grp_ema)
 
 string grp_kcounter = "K线计数器设置"
 showBarCount = input.bool(true, "K线计数", group=grp_kcounter)
 // intervalCount = input.bool(true, "间隔计数", group=grp_kcounter)
 c_contador = input.int(title="间隔计数", defval=2, group=grp_kcounter)
 rthSession = input.session("0930-1615", "RTH(美东时间)", group=grp_kcounter)
+rthCloseTime = input.string("1600", "RTH 收盘时间(美东时间)", group=grp_kcounter, tooltip="格式 HHMM。昨收取收盘时间之前(含)最后一根 K 线的收盘价，不受图表周期影响。")
 textSize = input.string("small", "文字大小", options=["tiny", "small", "normal", "large"], group=grp_kcounter)
 textColor = input.color(color.new(color.purple, 5), "文字颜色", group=grp_kcounter)
 
@@ -88,8 +91,8 @@ rangeBgColor = input.color(color.new(color.black, 70), "背景颜色", group=grp
 // ===== EMA =====
 ema20 = ta.ema(close, ema20Length)
 ema240 = ta.ema(close, ema240Length)
-plot(ema20, "EMA20", color=color.green, linewidth=1)
-plot(ema240, "EMA240", color=color.yellow, linewidth=1)
+plot(ema20, "EMA20", color=ema20Color, linewidth=1)
+plot(ema240, "EMA240", color=ema240Color, linewidth=1)
 
 // ================================================================= //
 // ===== IBS K线着色 + 区间震荡检测 =====
@@ -143,13 +146,11 @@ barcolor(bar_color)
 
 // RTH 开盘（B1）用于日内重置 L/H 计数
 bool isInRthSessionLH = not na(time(timeframe.period, rthSession, "America/New_York"))
-bool isNewRthDayLH = ta.change(time("D", "America/New_York")) != 0
+bool isNewRthDayLH = ta.change(dayofmonth(time, "America/New_York")) != 0
 bool rthSessionStartLH = isInRthSessionLH and (isNewRthDayLH or not isInRthSessionLH[1])
 
 // 摆动计数只用左侧确认，且只标入场K（RTH 内）
 int swingLen = 3
-float lowestLeft = ta.lowest(low, swingLen + 1)[1]
-float highestLeft = ta.highest(high, swingLen + 1)[1]
 bool hasHistory = bar_index > swingLen
 
 // 获取文字大小
@@ -241,7 +242,7 @@ var int barNumber = 0
 if showBarCount and inTimeRange
     
     bool isInRth = not na(time(timeframe.period, rthSession, "America/New_York"))
-    bool isNewDay = ta.change(time("D")) != 0
+    bool isNewDay = ta.change(dayofmonth(time, "America/New_York")) != 0
     bool isRthFirstBar = isNewDay and isInRth
     
     if isRthFirstBar
@@ -265,8 +266,9 @@ if showBarCount and inTimeRange
               textSize == "normal" ? size.normal :
               size.large
 
-            // 颜色逻辑：12的倍数(1小时)显示红色，否则显示默认颜色
-            color lblColor = barNumber % 12 == 0 ? color.red : textColor
+            // 颜色逻辑：每满 1 小时显示红色(5 分钟图为 12 的倍数)，否则显示默认颜色
+            int barsPerHour = int(60 / currentTfMinutes)
+            color lblColor = barsPerHour > 1 and barNumber % barsPerHour == 0 ? color.red : textColor
 
             label.new(
                  x=bar_index, 
@@ -285,17 +287,16 @@ if showBarCount and inTimeRange
 // 使用 RTH session 计算真正的开盘价、最高价、最低价、收盘价
 bool isInRthSession = not na(time(timeframe.period, rthSession, "America/New_York"))
 // 日线/高周期下上一根K线可能也是RTH内，因此用换日信号辅助判定开盘
-bool isNewRthDay = ta.change(time("D", "America/New_York")) != 0
+bool isNewRthDay = ta.change(dayofmonth(time, "America/New_York")) != 0
 bool rthSessionStart = isInRthSession and (isNewRthDay or not isInRthSession[1])  // RTH 第一根K线
 
 // 追踪当日 RTH 数据
 var float rthTodayOpen = na
 var float rthTodayHigh = na
 var float rthTodayLow = na
-var float rthTodayClose = na       // PA 收盘：排除最后3根K线
-var float _closeBuf1 = na          // 1根前的 close
-var float _closeBuf2 = na          // 2根前的 close
-var float _closeBuf3 = na          // 3根前的 close
+var float rthTodayClose = na       // PA 收盘：RTH 收盘时间之前最后一根 K 线的 close
+int rthCloseMin = int(str.tonumber(str.substring(rthCloseTime, 0, 2))) * 60 + int(str.tonumber(str.substring(rthCloseTime, 2, 4)))
+int etMinute = hour(time, "America/New_York") * 60 + minute(time, "America/New_York")
 var int todaySessionStartIndex = na
 
 // 保存昨日 RTH 数据
@@ -331,9 +332,6 @@ if rthSessionStart
     rthTodayHigh := high
     rthTodayLow := low
     rthTodayClose := na
-    _closeBuf1 := na
-    _closeBuf2 := na
-    _closeBuf3 := na
 
 // RTH 期间：更新最高价、最低价、收盘价
 if isInRthSession
@@ -343,18 +341,13 @@ if isInRthSession
         rthTodayHigh := high
         rthTodayLow := low
         rthTodayClose := na
-        _closeBuf1 := na
-        _closeBuf2 := na
-        _closeBuf3 := na
     else
         rthTodayHigh := na(rthTodayHigh) ? high : math.max(rthTodayHigh, high)
         rthTodayLow := na(rthTodayLow) ? low : math.min(rthTodayLow, low)
-    // 滚动缓冲：收盘价延迟3根K线
-    _closeBuf3 := _closeBuf2
-    _closeBuf2 := _closeBuf1
-    _closeBuf1 := close
-    if not na(_closeBuf3)
-        rthTodayClose := _closeBuf3
+    // 昨收取"开盘时间早于收盘时间"的最后一根 K 线收盘价：
+    // 1 分钟图取 15:59、5 分钟图取 15:55、15 分钟图取 15:45，均对应 16:00 收盘。
+    if etMinute < rthCloseMin
+        rthTodayClose := close
 
 // 用于 B1 提示的数据（使用 RTH 数据）
 todayOpen = rthTodayOpen
@@ -673,10 +666,10 @@ type Gap
 var array<Gap> gaps = array.new<Gap>()
 
 // 时间变量（避免重绘警告）
-newDayET = ta.change(time("D", "America/New_York"))
+newDayET = ta.change(dayofmonth(time, "America/New_York"))
 isCurrentNewDay = newDayET != 0
-isPrev1NewDay = ta.change(time("D", "America/New_York"))[1] != 0
-isPrev2NewDay = ta.change(time("D", "America/New_York"))[2] != 0
+isPrev1NewDay = ta.change(dayofmonth(time, "America/New_York"))[1] != 0
+isPrev2NewDay = ta.change(dayofmonth(time, "America/New_York"))[2] != 0
 
 // 工具函数：检查缺口是否重叠
 gapsOverlap(float top1, float bottom1, float top2, float bottom2) =>
